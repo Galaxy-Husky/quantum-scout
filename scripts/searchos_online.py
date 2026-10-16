@@ -289,7 +289,7 @@ class Query(Contract):
     query: StrictStr = Field(min_length=1, max_length=1000)
 
 
-DEFAULTS = {'providers': None, 'max_rounds': 5, 'max_model_calls': 64,
+DEFAULTS = {'providers': None, 'preferred_track': None, 'max_rounds': 5, 'max_model_calls': 64,
             'max_seconds': 1200, 'call_timeout': 60, 'max_sources_per_round': 2,
             'results_per_page': 3, 'max_context_chars': 40000,
             'stall_rounds': 3,
@@ -349,7 +349,11 @@ def read_config(path):
             raise ValueError('Use citation_identity or legacy citation_backend, not both')
     if not isinstance(config['citation_expansion_backend'], str) or config['citation_expansion_backend'] not in {'inherit', 'none', 'semantic_scholar', 'openalex'}:
         raise ValueError('Invalid citation expansion backend')
-    for key in set(DEFAULTS) - {'providers', 'citation_backend', 'citation_identity', 'citation_expansion_backend'}:
+    from schema_generator import TRACK_SKILLS
+    preferred = config['preferred_track']
+    if preferred is not None and (not isinstance(preferred, str) or preferred not in TRACK_SKILLS):
+        raise ValueError('preferred_track must be null or a supported Track ID')
+    for key in set(DEFAULTS) - {'providers', 'preferred_track', 'citation_backend', 'citation_identity', 'citation_expansion_backend'}:
         if type(config[key]) is not int or config[key] <= 0:
             raise ValueError(key + ' must be a positive integer')
     if config['results_per_page'] > 10:
@@ -1371,7 +1375,10 @@ class OnlineRunner:
                         if not ready:
                             return None
                         attempts = m['online']['attempted_tasks']
-                        task = min(ready, key=lambda t: (attempts.count(t.id), -t.priority))
+                        preferred = self.config.get('preferred_track')
+                        task = min(ready, key=lambda t: (
+                            0 if preferred and t.table_id.rsplit('_', 1)[0] == preferred else 1,
+                            attempts.count(t.id), -t.priority))
                         m['claimed_tasks'].append(task.id)
                         attempts.append(task.id)
                         m['online']['invocations'][-1]['active_task'] = task.id

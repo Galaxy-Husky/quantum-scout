@@ -19,6 +19,17 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
+def prompt_rule(rule):
+    """Explain an otherwise label-only feasibility rule without changing its condition."""
+    if rule.get("require_fault_tolerance") is False and not rule.get("description"):
+        return {**rule, "description": (
+            "Evaluate whether this protocol can be implemented without fault-tolerant quantum computing. "
+            "Commercial readiness, network range and deployment years are not requirements of this criterion. "
+            "Laboratory status alone establishes neither true nor false; require body evidence about "
+            "the actual hardware and computation needed. Missing evidence remains insufficient_evidence.")}
+    return rule
+
+
 def domain_config(config_dir=SKILL_ROOT / "config"):
     config_dir = Path(config_dir)
     tracks = yaml.safe_load((config_dir / "tracks.yaml").read_text())
@@ -54,7 +65,7 @@ def generate(case_ids, config=None):
             tables.append({"table_id": track + "_" + kind,
                            "table_label": rules["display_name_zh"] + " " + kind,
                            "entities": case_ids, "attributes": list(columns), "primary_key": [],
-                           "column_desc": {name: {"type": "str", "desc": json.dumps(rule, ensure_ascii=False),
+                           "column_desc": {name: {"type": "str", "desc": json.dumps(prompt_rule(rule), ensure_ascii=False),
                                                    "check": {"enum": allowed}}
                                            for name, rule in columns.items()}})
     return {"version": 1, "config_sha256": digest(config), "coverage_role": "scheduling_only",

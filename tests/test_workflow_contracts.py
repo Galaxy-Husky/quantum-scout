@@ -177,6 +177,67 @@ class WorkflowContractTests(unittest.TestCase):
     def test_synthetic_admission_and_scores_stop_at_case_cap_with_consistent_views(self):
         self.three_source_sequence(admitted=True)
 
+    def test_preferred_track_reaches_scoring_before_other_track_can_reject(self):
+        self.preferred_track_sequence(admitted=True)
+
+    def test_preferred_track_rejection_does_not_schedule_scores(self):
+        self.preferred_track_sequence(admitted=False)
+
+    def preferred_track_sequence(self, admitted):
+        # Explicit fixtures exercise scheduling and gates, not real Track eligibility.
+        self.config.update(preferred_track='quantum-security', max_rounds=6, max_model_calls=64)
+        config = adapter.load(self.path)['config']
+        track = config['tracks']['quantum-security']
+        def output(names, value='Evidence'):
+            return {'candidates': [{**self.candidate, 'field': field, 'quote': 'Evidence.',
+                'value_text': 'experimental: Evidence' if field == 'deployment_boundary' else value}
+                for field in names], 'missing': {}}
+        outputs = [output(config['fields']),
+                   output(track['admission_criteria'], 'true' if admitted else 'false')]
+        if admitted:
+            outputs.append(output(track['scoring_dimensions'], '3'))
+        models = {'extraction': fixtures.Model(outputs), 'judge': fixtures.Model(self.judgment)}
+        provider = SequenceProvider([])
+        async def opener(url, directory, run_id):
+            return {'source_id': 'preferred-track-fixture', 'run_id': run_id, 'status': 'opened',
+                'url': url, 'document_version': 'synthetic', 'text': '[paragraph:1]\nEvidence.',
+                'segments': [{'location': 'paragraph:1', 'text': 'Evidence.'}]}
+        result = asyncio.run(OnlineRunner(self.path, self.config, models=models,
+            providers={'serper': provider}, opener=opener, extractor=self.extractor).run(
+                known_url='https://fixture.example/preferred-track', case_id='TEST-0001'))
+        raw, batch = self.assert_views(self.path, result)
+        self.assertEqual(result['stop_reason'], 'case_coverage_complete')
+        rounds = [e for e in raw['online']['events'] if e['kind'] == 'round_completed']
+        # Completed tasks disappear from Frontier; derive their stable IDs from the contract.
+        from schema_generator import digest
+        expected = ['problem_definition', 'quantum-security_admission']
+        if admitted:
+            expected.append('quantum-security_scoring')
+        self.assertEqual([e['task_id'] for e in rounds],
+                         ['qs_' + digest(['TEST-0001', table])[:20] for table in expected])
+        evaluation = batch['cases'][0]['tracks']['quantum-security']
+        self.assertEqual(evaluation['passed_admission'], admitted)
+        self.assertEqual(evaluation['score_normalized'], 15 if admitted else None)
+        # The generated interpretation reaches both consumers; it never sets the verdict.
+        calls = [e for e in raw['online']['events'] if e['kind'] == 'model_call_started']
+        extraction = next(e for e in calls if e['role'] == 'extraction'
+                          and e.get('table_id') == 'quantum-security_admission')
+        review = next(e for e in calls if e['role'] == 'judge'
+                      and e['input'].get('candidate', {}).get('field') == 'S4')
+        s4_rule = extraction['input']['column_rules']['S4']
+        self.assertEqual(review['input']['domain_rules'], s4_rule)
+        interpreted = json.loads(s4_rule['desc'])
+        self.assertFalse(interpreted['require_fault_tolerance'])
+        self.assertIn('without fault-tolerant quantum computing', interpreted['description'])
+        self.assertIn('neither true nor false', interpreted['description'])
+        from contextgem_extractor import document_for
+        doc = document_for([{'location': 'page:1', 'text': 'Synthetic laboratory implementation.'}],
+            {'target_cells': ['quantum-security_admission/TEST-0001.S4'], 'column_rules': {'S4': s4_rule}})
+        self.assertIn('without fault-tolerant quantum computing', doc.concepts[0].description)
+        self.assertNotIn('description', config['tracks']['quantum-security']['admission_criteria']['S4'])
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(models['extraction'].output, [])
+
     def three_source_sequence(self, admitted):
         # Both outcomes are explicit model fixtures; neither measures real admission quality.
         self.config.update(max_rounds=8, max_model_calls=50, analysis_limit=10,
@@ -335,7 +396,16 @@ class ConfigurationContractTests(unittest.TestCase):
         for data in invalid:
             with self.subTest(data=data), self.assertRaises(ValueError):
                 self.read(data)
-        for name in set(DEFAULTS) - {'providers', 'citation_backend', 'citation_identity', 'citation_expansion_backend'}:
+        for name in set(DEFAULTS) - {'providers', 'preferred_track', 'citation_backend', 'citation_identity', 'citation_expansion_backend'}:
             for value in (0, -1, True, '2', None):
                 with self.subTest(name=name, value=value), self.assertRaises(ValueError):
                     self.read({**base, name: value})
+
+    def test_optional_track_preference_is_validated_without_setting_verdicts(self):
+        base = {'cases': {'TEST-0001': {'description': 'Synthetic configuration'}}}
+        for value in (None, 'quantum-security', 'nonlocal-coordination'):
+            with self.subTest(value=value):
+                self.assertEqual(self.read({**base, 'preferred_track': value})['preferred_track'], value)
+        for value in ('QS', '', [], {}, True):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.read({**base, 'preferred_track': value})

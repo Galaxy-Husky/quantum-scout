@@ -6,7 +6,7 @@
 
 模型角色和搜索后端复用 SearchOS 共享设置；`--settings-file` > `SF_WEB_SETTINGS_PATH` > 所选 env 项目的 JSON > 安装默认值。显式文件损坏/缺失报错，不退回其他模型。`--env-file` 加载密钥，已有环境变量优先；不把密钥写入任务 JSON、日志或共享设置。
 
-任务 JSON 只配置候选、查询与预算；`cases` 是案例 ID 到 `{description, queries}` 的映射，description 明确协议/系统身份，不预填领域结论。queries 使用普通 Web 查询列表，省略 providers 继承共享选择。候选 ID 格式为3–4位大写领域代码加4位序号，如 SYNC-0001。
+任务 JSON 配置候选、查询、预算及可选调度偏好；`cases` 是案例 ID 到 `{description, queries}` 的映射，description 明确协议/系统身份，不预填领域结论。queries 使用普通 Web 查询列表，省略 providers 继承共享选择。候选 ID 格式为3–4位大写领域代码加4位序号，如 SYNC-0001。`preferred_track` 可为 `quantum-security`、`nonlocal-coordination` 或默认 null；仅优先选择该 Track 当前可执行的准入/评分任务，避免另一 Track 拒绝先完成案例，不改变八字段前置、全 true 评分门或覆盖停止契约。
 
 ```json
 {
