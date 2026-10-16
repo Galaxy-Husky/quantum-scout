@@ -1,0 +1,49 @@
+audit:
+  min_audit_coverage: 0.10
+  min_audit_samples: 3
+  warn_if_coverage_below: 0.05
+# phase 只约束 agent 的阶段规划；online runner 使用独立 JSON，不隐式继承这些上限。
+current_phase: pilot
+mode: calibration
+resume_from: null
+cache_sources: true
+# Retrieval budgets and diagnostics; these never prove global search exhaustion.
+pagination:
+  max_pages: 3
+  min_endpoints_for_finite_space: 2
+  min_hit_ratio_for_hit_sufficient: 0.5  # legacy diagnostic only, not a stopping gate
+execution:
+  backend: native
+  semantic_verifier: unavailable
+  coverage_role: scheduling_only
+phases:
+  pilot:
+    discovery_limit: 100
+    analysis_limit: 100
+    diminishing_returns_threshold: 5
+    industries:
+      - {id: distributed-systems, sub: consensus-protocols}
+      - {id: telecom, sub: clock-synchronization}
+    max_cases: 20
+    batch_size: 5
+    require_manual_review: true
+  expand:
+    discovery_limit: 200
+    analysis_limit: 100
+    diminishing_returns_threshold: 8
+    industries:
+      - {id: industrial-automation}
+      - {id: energy-grid}
+      - {id: autonomous-driving}
+      - {id: supply-chain}
+    max_cases: 40
+    batch_size: 10
+    require_manual_review: true
+  full:
+    discovery_limit: 500
+    analysis_limit: 250
+    diminishing_returns_threshold: 10
+    industries: all
+    target_cases: 200
+    batch_size: 20
+    require_manual_review: false

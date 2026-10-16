@@ -1,0 +1,7 @@
+exclude_domains:
+  - id: high-frequency-trading
+    labels: [HFT, high-frequency trading, algorithmic trading, market making, latency arbitrage]
+    reason: 用户指定排除
+  - id: defense
+    labels: [defense, defence, military, weapons, combat, C4ISR, battlefield]
+    reason: 用户指定排除

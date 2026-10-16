@@ -1,0 +1,146 @@
+tracks:
+  nonlocal-coordination:
+    track_id: "nonlocal-coordination"
+    display_name_en: "Low-latency quantum coordination"
+    display_name_zh: "低延迟量子协调"
+    internal_name: "Nonlocal coordination under latency constraints"
+    name: 非局域协调
+    mechanisms:
+      - Bell 非局域性
+      - 非局域博弈
+      - 延迟约束博弈
+    max_score: 25  # score_total 原始上限；score_normalized 两条 Track 均映射到 0–25
+    min_total_score: 15  # 归一化分数门槛；比较 score_normalized 而非 score_total
+    admission_criteria:
+      C1:
+        name: "延迟约束存在"
+        description: >
+          两个或以上参与方，其决策时间窗口被光速或其他不可消除的延迟所限。
+          注意：不要求延迟"极低"，只要求延迟使得经典通信在决策窗口内不可行。
+      C2:
+        name: "经典通信不可行"
+        description: >
+          参与方无法在决策窗口内完成经典通信。
+          不是"通信慢"，而是"物理上或操作上不可能"。
+          若经典方案只需加钱/加带宽/加中继即可解决，则不满足 C2。
+      C3:
+        name: "量子优势严格可证"
+        description: >
+          场景可建模为非局域博弈（nonlocal game）或延迟约束博弈，
+          Bell 不等式违反提供严格数学证明的优势。
+          启发式论证、经验观察、数值模拟优势一律不接受。
+        require_strict_proof: true
+        reject_if: "heuristic_only"
+      C4:
+        name: "近中期可实现"
+        description: >
+          仅需双量子比特纠缠 + 单量子比特操作 + 测量。
+          无需容错量子计算，无需量子中继。
+        require_fault_tolerance: false
+    scoring_dimensions:
+      latency_urgency:
+        anchors:
+          '1': "> 1 ms；已满足 C2，但经典通信仅在较宽的决策窗口内不可行"
+          '3': "10 μs – 1 ms"
+          '5': "< 10 μs"
+      quantum_advantage_magnitude:
+        anchors:
+          '1': "理论优势存在但 < 2 倍；必须在 reason 中说明仍值得纳入的产业价值"
+          '3': 2–5 倍
+          '5': 至少 10 倍或定性不同
+      implementation_feasibility:
+        anchors:
+          '1': "实验室演示需定制硬件，工程化路径不清晰"
+          '3': "需专门的量子光源或探测器，但已有商用组件"
+          '5': "可用现有光通信基础设施和常规量子光学组件"
+      time_to_deployment:
+        anchors:
+          '1': "(10 年, ∞)"
+          '3': "(5 年, 10 年]"
+          '5': "[0, 5 年]"
+      evidence_strength:
+        anchors:
+          '1': "已有严格证明，但无数值分析"
+          '3': "已有严格证明和数值分析，无实验"
+          '5': "已有严格证明、数值分析，以及实验演示或详细工程可行性分析"
+
+  quantum-security:
+    track_id: "quantum-security"
+    display_name_en: "Quantum security"
+    display_name_zh: "量子保密"
+    internal_name: "Quantum security"
+    name: 量子保密
+    mechanisms:
+      - QKD
+      - DI-QKD
+      - quantum_secret_sharing
+      - QRNG
+      - quantum_secure_direct_communication
+    max_score: 30  # 6 维 × 5 的 score_total 原始上限；score_normalized 上限仍为 25
+    min_total_score: 15  # 归一化分数门槛；比较 score_normalized 而非 score_total
+    admission_criteria:
+      S1:
+        name: "窃听者模型明确"
+        require_formal_threat_model: true
+      S2:
+        name: "信息论或设备无关安全"
+        description: "不依赖计算假设的安全保证。"
+      S3:
+        name: "量子机制明确"
+        allowed:
+          - QKD
+          - DI-QKD
+          - quantum_secret_sharing
+          - QRNG
+          - quantum_secure_direct_communication
+        infrastructure_does_not_count: true
+      S4:
+        name: "近中期可实现"
+        require_fault_tolerance: false
+    scoring_dimensions:
+      secrecy_urgency:
+        anchors:
+          '1': "经典方案在特定威胁模型下仍有理论弱点，但实际攻击成本极高"
+          '3': "经典方案在特定威胁模型下存在可操作的理论弱点"
+          '5': 经典有已证实的不可克服弱点
+      security_advantage_magnitude:
+        anchors:
+          '1': "已满足 S2 的信息论或设备无关安全，但相对适用的经典基线只提供最低等级的安全收益"
+          '3': "信息论安全，但依赖设备可信假设"
+          '5': "信息论安全，并对特定攻击类别（如侧信道）免疫"
+      device_independence:
+        anchors:
+          '1': "安全性依赖光源、探测器和随机源全部可信"
+          '3': "至少一个组件可不被信任，例如测量设备无关 QKD（MDI-QKD）"
+          '5': "安全性只依赖观测到的 Bell 违反统计，设备全部不可信"
+      implementation_feasibility:
+        anchors:
+          '1': "实验室演示需定制硬件，工程化路径不清晰"
+          '3': "需专门的量子光源或探测器，但已有商用组件和专用量子信道"
+          '5': "可用现有光纤或自由空间链路及常规量子光学组件"
+      time_to_deployment:
+        anchors:
+          '1': "(10 年, ∞)"
+          '3': "(5 年, 10 年]"
+          '5': "[0, 5 年]"
+      evidence_strength:
+        anchors:
+          '1': "已有形式化安全证明，但无定量分析"
+          '3': "已有形式化安全证明和定量分析，无实验"
+          '5': "已有形式化安全证明、定量分析，以及实验演示或商用部署"
+
+scoring_rules:
+  range:
+    - 1
+    - 5
+  missing: null
+  normalization: score_total / (valid_dimension_count * 5) * 25
+  minimum_valid_dimensions:
+    nonlocal-coordination: 4
+    quantum-security: 5
+  all_null: insufficient_evidence; no passing score
+  allowed_scores:
+    - 1
+    - 3
+    - 5
+  boundary: 区间端点按锚点中的开闭区间解释；未落入明确区间的值保留 NULL 并在复盘校准

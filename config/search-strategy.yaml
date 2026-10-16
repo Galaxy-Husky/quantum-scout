@@ -1,0 +1,30 @@
+# 以下是 Skill 默认配置的检索种子，不代表完整搜索空间。运行时必须继续生成自适应查询。
+# 当前为 agent 检索规划配置；online runner 不自动读取。scripts/searchos_seeds.py 只解析 layer1 动作，不联网。
+configured_seed_queries:
+  layer1_sources:
+  - {id: SEED-L1-001, url: 'https://arxiv.org/pdf/2407.21723'}
+  - {id: SEED-L1-002, url: 'https://arxiv.org/pdf/2510.26349'}
+  - {id: SEED-L1-003, query: '"Dawei Ding" quantum applications'}
+  layer2_queries:
+  - {id: SEED-L2-NLC-001, track: nonlocal-coordination, domain: distributed-systems/consensus}
+  - {id: SEED-L2-NLC-002, track: nonlocal-coordination, domain: telecom/clock-synchronization}
+  - {id: SEED-L2-NLC-003, track: nonlocal-coordination, domain: industrial-automation}
+  - {id: SEED-L2-NLC-004, track: nonlocal-coordination, domain: energy-grid}
+  - {id: SEED-L2-NLC-005, track: nonlocal-coordination, domain: autonomous-driving}
+  - {id: SEED-L2-NLC-006, track: nonlocal-coordination, domain: supply-chain}
+  - {id: SEED-L2-NLC-007, track: nonlocal-coordination, domain: distributed-quantum-computing}
+  - {id: SEED-L2-QS-001, track: quantum-security, domain: finance/non-hft}
+  - {id: SEED-L2-QS-002, track: quantum-security, domain: government-data-protection}
+  - {id: SEED-L2-QS-003, track: quantum-security, domain: healthcare-data-protection}
+  - {id: SEED-L2-QS-004, track: quantum-security, domain: critical-infrastructure}
+  - {id: SEED-L2-QS-005, track: quantum-security, domain: cloud-key-management}
+  - {id: SEED-L2-QS-006, track: quantum-security, domain: satellite-communication}
+  layer3_queries:
+  - {id: SEED-L3-NLC-001, track: nonlocal-coordination, keyword: '"nonlocal game" AND ("latency" OR "real-time")'}
+  - {id: SEED-L3-NLC-002, track: nonlocal-coordination, keyword: '"Bell inequality" AND ("decision" OR "coordination")'}
+  - {id: SEED-L3-NLC-003, track: nonlocal-coordination, keyword: '"quantum advantage" AND ("microsecond" OR "low-latency")'}
+  - {id: SEED-L3-NLC-004, track: nonlocal-coordination, keyword: '"entanglement-based clock synchronization"'}
+  - {id: SEED-L3-QS-001, track: quantum-security, keyword: '"device-independent" AND ("QKD" OR "key distribution")'}
+  - {id: SEED-L3-QS-002, track: quantum-security, keyword: '"information-theoretic security" AND "quantum"'}
+  - {id: SEED-L3-QS-003, track: quantum-security, keyword: '"quantum secret sharing"'}
+  - {id: SEED-L3-QS-004, track: quantum-security, keyword: '"quantum-secured time transfer"'}

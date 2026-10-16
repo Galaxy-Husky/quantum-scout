@@ -1,0 +1,14 @@
+description: Check quote existence against a fetched full text; return candidates and auditable failures, without semantic verification or Evidence Graph insertion.
+params_schema:
+  run_id:
+    type: string
+    required: true
+    description: Current Quantum Scout run identifier.
+  source:
+    type: object
+    required: true
+    description: source_id, run_id, status=opened, document_version, text; URL-routed calls may use url and ctx.markdown.
+  evidence:
+    type: array
+    required: true
+    description: Candidate objects with case_id, field, source_id, quote and location.
