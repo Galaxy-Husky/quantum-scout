@@ -26,8 +26,11 @@ class FixedURLContextTests(unittest.TestCase):
         meta = load(self.path)
         self.assertEqual(first['rounds'], 1)
         self.assertEqual(first['model_calls'], 3)
-        self.assertEqual(first['stop_reason'], 'budget_exhausted')
-        self.assertEqual(first['operational_cause'], 'tasks_claimed_or_sources_pending')
+        self.assertEqual(first['stop_reason'], 'operational_pool_exhausted')
+        self.assertEqual(first['operational_cause'], 'fixed_source_assessed_with_gaps')
+        self.assertFalse(first['completed'])
+        self.assertTrue(first['stop_evidence']['actions'])
+        self.assertIn('not global exhaustion', first['stop_evidence']['endpoints'][0]['limitation'])
         self.assertTrue(meta['online']['assessments'])
         self.assertTrue(all(v == 'done' for v in meta['online']['assessments'].values()))
         self.assertTrue(any(t.status.value == 'pending' for t in project(meta).frontier.questions))
@@ -37,9 +40,106 @@ class FixedURLContextTests(unittest.TestCase):
         second = asyncio.run(runner().run(known_url='https://fixture.example/paper', case_id='TEST-0001'))
         self.assertEqual(second['rounds'], 0)
         self.assertEqual(second['model_calls'], 0)
-        self.assertEqual(second['operational_cause'], 'tasks_claimed_or_sources_pending')
+        self.assertEqual(second['operational_cause'], 'fixed_source_assessed_with_gaps')
         self.assertEqual(len(load(self.path)['online']['attempted_tasks']), 1)
         self.assertEqual(len(self.opened), 1)
+
+    def check_failed_fixed_source(self, max_rounds):
+        import httpx
+        self.config['max_rounds'] = max_rounds
+        async def opener(url, *args):
+            self.opened.append(url)
+            raise httpx.ConnectError('Synthetic connection failure; no external HTTP')
+        models = {'extraction': fixtures.Model(self.extraction), 'judge': fixtures.Model(self.judgment)}
+        result = asyncio.run(OnlineRunner(self.path, self.config, models=models,
+            providers={'serper': self.provider}, opener=opener, extractor=self.extractor).run(
+                known_url='https://fixture.example/paper', case_id='TEST-0001'))
+        self.assertEqual(result['stop_reason'], 'error')
+        self.assertEqual(result['operational_cause'], 'source_unavailable')
+        self.assertEqual(result['stop_evidence']['error_type'], 'ConnectError')
+        self.assertNotIn('budget_cause', result['stop_evidence'])
+        self.assertFalse(result['completed'])
+        self.assertEqual(result['model_calls'], 0)
+        self.assertEqual(result['rounds'], 1)
+        self.assertEqual(self.opened, ['https://fixture.example/paper'] * 2)
+        self.assertEqual(self.provider.calls, [])
+        self.assertTrue(all(not model.calls for model in models.values()))
+        meta = load(self.path)
+        self.assertEqual(meta['claimed_tasks'], [])
+        self.assertTrue(all(v['attempts'] == 2 for v in meta['online']['sources'].values()))
+        retries = [e for e in meta['online']['events'] if e['kind'] == 'source_retry']
+        self.assertEqual(len(retries), 1)
+        self.assertTrue(retries[0]['within_invocation'])
+
+    def test_failed_fixed_source_stops_even_on_last_round(self):
+        self.check_failed_fixed_source(max_rounds=1)
+
+    def test_failed_fixed_source_does_not_get_a_third_attempt_with_unused_budget(self):
+        self.check_failed_fixed_source(max_rounds=6)
+
+    def test_connect_error_once_then_success_continues_into_model_chain(self):
+        import httpx
+        self.config['max_rounds'] = 6
+        original_opener = self.opener
+        attempts = []
+        async def opener(url, *args):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise httpx.ConnectError('Synthetic first attempt fails')
+            return await original_opener(url, *args)
+        models = {'extraction': fixtures.Model(self.extraction), 'judge': fixtures.Model(self.judgment)}
+        result = asyncio.run(OnlineRunner(self.path, self.config, models=models,
+            providers={'serper': self.provider}, opener=opener, extractor=self.extractor).run(
+                known_url='https://fixture.example/paper', case_id='TEST-0001'))
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(result['model_calls'], 3)
+        self.assertEqual(result['coverage']['filled'], 1)
+        self.assertEqual(result['stop_reason'], 'operational_pool_exhausted')
+        record = next(iter(load(self.path)['online']['sources'].values()))
+        self.assertEqual(record['status'], 'opened')
+        self.assertEqual(record['attempts'], 2)
+        self.assertNotIn('error_type', record)
+
+    def check_nonretryable_source(self, error):
+        self.config['max_rounds'] = 6
+        async def opener(url, *args):
+            self.opened.append(url)
+            raise error
+        models = {'extraction': fixtures.Model(self.extraction), 'judge': fixtures.Model(self.judgment)}
+        result = asyncio.run(OnlineRunner(self.path, self.config, models=models,
+            providers={'serper': self.provider}, opener=opener, extractor=self.extractor).run(
+                known_url='https://fixture.example/paper', case_id='TEST-0001'))
+        self.assertEqual(result['stop_reason'], 'error')
+        self.assertEqual(result['stop_evidence']['error_type'], type(error).__name__)
+        self.assertEqual(result['model_calls'], 0)
+        self.assertEqual(len(self.opened), 1)
+        self.assertFalse(any(e['kind'] == 'source_retry' for e in load(self.path)['online']['events']))
+
+    def test_source_connect_timeout_is_not_retried(self):
+        import httpx
+        self.check_nonretryable_source(httpx.ConnectTimeout('Synthetic timeout'))
+
+    def test_source_429_is_not_retried(self):
+        import httpx
+        request = httpx.Request('GET', 'https://fixture.example/paper')
+        response = httpx.Response(429, request=request)
+        self.check_nonretryable_source(httpx.HTTPStatusError('Synthetic 429', request=request, response=response))
+
+    def test_connect_retry_cannot_extend_the_time_budget(self):
+        import httpx
+        async def opener(url, *args):
+            self.opened.append(url)
+            runner.deadline = 0
+            raise httpx.ConnectError('Synthetic failure at total deadline')
+        models = {'extraction': fixtures.Model(self.extraction), 'judge': fixtures.Model(self.judgment)}
+        runner = OnlineRunner(self.path, self.config, models=models,
+            providers={'serper': self.provider}, opener=opener, extractor=self.extractor)
+        result = asyncio.run(runner.run(known_url='https://fixture.example/paper', case_id='TEST-0001'))
+        self.assertEqual(result['stop_reason'], 'budget_exhausted')
+        self.assertEqual(result['operational_cause'], 'wall_clock_limit')
+        self.assertEqual(result['model_calls'], 0)
+        self.assertEqual(len(self.opened), 1)
+        self.assertFalse(any(e['kind'] == 'source_retry' for e in load(self.path)['online']['events']))
 
     def test_context_window_boundaries_and_actual_judge_payload(self):
         segments = [{'location': f'page:{i}', 'text': f'Unique body {i}.'} for i in range(1, 4)]

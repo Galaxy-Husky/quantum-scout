@@ -325,11 +325,18 @@ class ContextGemTests(unittest.TestCase):
             self.assertEqual(kwargs['temperature'], 0.0)
             self.assertEqual(kwargs['num_retries'], 0)
             self.assertEqual(kwargs['max_retries'], 0)
+            body_prompt = next(m['content'] for m in kwargs['messages'] if m['role'] == 'user')
+            for phrase in ('timing protocols', 'vulnerable to asymmetric', 'Hong–Ou–Mandel (HOM)'):
+                self.assertIn(phrase, body_prompt)
+            for joined in ('timingprotocols', 'toasymmetric', 'Mandel(HOM)'):
+                self.assertNotIn(joined, body_prompt)
             return ModelResponse(model='gpt-4o-mini', choices=[{'message': {'role': 'assistant', 'content': json.dumps(content)}}],
                 usage={'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2})
+        body = ('Two parties decide. Evidence exists. Classical two–way timing\nprotocols are '
+                'vulnerable to\nasymmetric channel delays. Bidirectional Hong–Ou–Mandel\n(HOM) interferometry.')
         with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', completion):
             result = asyncio.run(extract(runner, {'target_cells': ['problem_definition/TEST-0001.parties_and_roles']},
-                [{'location': 'page:1', 'text': 'Two parties decide.'}, {'location': 'page:2', 'text': 'Two parties decide. Evidence exists.'}]))
+                [{'location': 'page:1', 'text': 'Two parties decide.'}, {'location': 'page:2', 'text': body}]))
         self.assertEqual(runner.calls, 1)
         self.assertEqual(result['candidates'][0]['location'], 'page:2')
         self.assertTrue(result['candidates'][0]['justification'])
@@ -344,7 +351,7 @@ class ContextGemTests(unittest.TestCase):
         context = {'target_cells': ['problem_definition/TEST-0001.parties_and_roles',
                                    'problem_definition/TEST-0001.constraints']}
         segments = [{'location': 'page:1', 'text': 'Two parties decide.'},
-                    {'location': 'page:2', 'text': 'Two parties decide. Evidence exists.'}]
+                    {'location': 'page:2', 'text': body}]
         with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', completion):
             result = asyncio.run(extract(runner, context, segments))
         self.assertEqual(len(result['candidates']), 1)
@@ -355,10 +362,38 @@ class ContextGemTests(unittest.TestCase):
             with self.assertRaises(ContractViolation):
                 asyncio.run(extract(runner, context, segments))
         self.assertEqual(runner.calls, 3)
+        self.assertEqual(segments[1]['text'], body)
 
 
 
 class ContextContractTests(unittest.TestCase):
+    def test_missing_admission_is_empty_and_false_evidence_is_preserved(self):
+        from contextgem_extractor import document_for, candidates_from, isolate_contract_items
+        from pydantic import ValidationError
+        segments = [{'location': 'page:1', 'text': 'Classical transfer can run in parallel.'}]
+        doc = document_for(segments, {'target_cells': [
+            'nonlocal-coordination_admission/TEST-0001.C2', 'nonlocal-coordination_admission/TEST-0001.C3']})
+        value = {'value_text': 'false', 'quote': 'Classical transfer', 'evidence_level': 'primary',
+                 'confidence': 'medium', 'coverage_status': 'covered', 'applicability_reason': ''}
+        validator = doc.concepts[0]._get_structure_validator()
+        self.assertEqual(validator.model_validate(value).value_text, 'false')
+        for change in ({'value_text': 'insufficient_evidence'}, {'coverage_status': 'not_applicable'}):
+            with self.assertRaises(ValidationError):
+                validator.model_validate({**value, **change})
+        empty = candidates_from(doc, segments)
+        self.assertEqual(empty['candidates'], [])
+        self.assertEqual(set(empty['missing']), {'C2', 'C3'})
+        item = {'value': value, 'justification': 'Explicit classical transfer.',
+                'reference_paragraphs': [{'reference_paragraph_id': 'P0', 'reference_sentence_ids': ['P0-S0']}]}
+        bad = deepcopy(item); bad['value'].update(value_text='insufficient_evidence', coverage_status='not_applicable')
+        raw = [{'concept_id': 'C0', 'extracted_items': [item]}, {'concept_id': 'C1', 'extracted_items': [bad]}]
+        filtered, rejected, retained = isolate_contract_items(
+            json.dumps(raw), ['C2', 'C3'], 'nonlocal-coordination_admission')
+        self.assertEqual(retained, 1)
+        self.assertEqual(json.loads(filtered)[0]['extracted_items'], [item])
+        self.assertEqual(json.loads(filtered)[1]['extracted_items'], [])
+        self.assertEqual(rejected[0]['candidate'], bad)
+
     def test_raw_contextgem_filter_preserves_items_and_envelope_failures(self):
         from contextgem_extractor import isolate_contract_items
         item = {'value': {'value_text': 'two parties', 'quote': 'Two parties', 'confidence': 'medium',

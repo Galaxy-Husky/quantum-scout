@@ -165,6 +165,33 @@ def stop_decision(meta, state, audit=None, trace=None):
         'rationale': 'No ready/running tasks or unattempted discovered sources within this operation scope.'}
 
 
+def fixed_source_stop_evidence(meta, state, url, case_id):
+    """A fully assessed fixed source is an operation limit, not spent model/time budget."""
+    from schema_generator import digest
+    online = meta['online']
+    record = online['sources'].get(digest(url))
+    if (meta.get('claimed_tasks') or not record or record['status'] != 'opened'
+            or source_backlog(meta) or search_backlog(meta)):
+        return None
+    tasks = [t for t in state.frontier.questions if t.id not in meta.get('citation_tasks', {})
+             and any(c.split('/', 1)[1].split('.', 1)[0] == case_id for c in t.target_cells)]
+    if any(t.status.value == 'running' or (t.status.value == 'pending' and
+           resolve_assessment(online, t.model_dump(), record['source'])['cursor'] != 'done') for t in tasks):
+        return None
+    reason = 'Fixed-source invocation: other sources, searches and citation expansion are outside this invocation'
+    actions = [{'id': t.id, 'status': 'blocked', 'reason': reason + '; reviewed prerequisites or source evidence remain missing'}
+               for t in state.frontier.questions if t.status.value in {'pending', 'blocked', 'running'}]
+    actions += [{'id': seed, 'status': 'blocked', 'reason': reason} for seed in seed_pending(meta)]
+    actions += [{'id': 'fixed-source:' + record['source']['source_id'], 'status': 'completed',
+                 'reason': 'Opened source has no unassessed segments for any ready task in the selected case'},
+                {'id': 'fixed-source:search-and-pagination', 'status': 'blocked', 'reason': reason},
+                {'id': 'fixed-source:citation-expansion', 'status': 'blocked', 'reason': reason}]
+    return {'actions': actions, 'endpoints': [{'id': url, 'pages_fetched': 1,
+        'limitation': 'One explicit body URL and case only; no search or citation expansion; not global exhaustion'}],
+        'rationale': 'All executable assessments of the fixed body source are complete; evidence gaps remain. '
+                     'Model-call and time budgets were not exhausted by this condition.'}
+
+
 def online_limit_policy(config, scope):
     """Online values are effective; phase settings are planning context, not overrides."""
     phase = scope.get('current_phase')
