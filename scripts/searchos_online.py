@@ -430,10 +430,8 @@ def doctor(config, source_urls=()):
         problems.append('contextgem is not installed')
     else:
         try:
-            from contextgem_extractor import document_for, make_llm
-            probe = document_for([{'text': 'Construction check only.', 'location': 'preflight'}],
-                {'target_cells': ['problem_definition/TEST-0001.real_world_problem']})
-            make_llm(type('Probe', (), {'config': config})(), probe)
+            from contextgem_extractor import make_llm
+            make_llm(type('Probe', (), {'config': config})())
         except Exception as exc:
             problems.append('contextgem construction failed: ' + type(exc).__name__)
     from citation_backends import identity_backends, expansion_backend

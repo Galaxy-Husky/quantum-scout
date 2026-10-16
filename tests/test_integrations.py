@@ -95,7 +95,7 @@ class WorkflowTests(unittest.TestCase):
     extractor = fixtures.OnlineTests.extractor
     run_fixture = fixtures.OnlineTests.run_fixture
 
-    def test_transient_source_failure_recovers_via_formal_resume(self):
+    def test_connect_retry_recovers_before_formal_resume(self):
         original = self.opener
         calls = []
         async def flaky(*args):
@@ -106,7 +106,7 @@ class WorkflowTests(unittest.TestCase):
         self.opener = flaky
         first, _ = self.run_fixture()
         second, _ = self.run_fixture()
-        self.assertEqual(first['coverage']['filled'], 0)
+        self.assertEqual(first['coverage']['filled'], 1)
         self.assertEqual(second['coverage']['filled'], 1)
         self.assertEqual(len(calls), 2)
         meta = adapter.load(self.path)
@@ -276,6 +276,20 @@ class WorkflowTests(unittest.TestCase):
 
 
 class ContextGemTests(unittest.TestCase):
+    def test_source_quote_choices_preserve_body_and_bound_every_anchor(self):
+        from contextgem_extractor import document_for, source_quote_options
+        segments = [{'location': 'page:1', 'text': (
+            'The problem of clock synchronization involves two spatially separated parties, '
+            'Alice and Bob, each possessing local clocks. ' + '量子时钟同步约束' * 15 + '。')}]
+        original = deepcopy(segments)
+        document = document_for(segments, {'target_cells': ['problem_definition/TEST-0001.real_world_problem']})
+        choices = source_quote_options(document)
+        self.assertTrue(choices)
+        self.assertTrue(all(0 < len(q) <= 50 for q in choices.values()))
+        # Even text without spaces is covered; no source characters are silently discarded.
+        self.assertEqual(''.join(''.join(choices.values()).split()), ''.join(segments[0]['text'].split()))
+        self.assertEqual(segments, original)
+
     def test_bad_reference_isolated_without_rewriting_quote(self):
         from contextgem_extractor import candidates_from
         sentence = SimpleNamespace(raw_text='Two\n parties decide.')
@@ -314,7 +328,7 @@ class ContextGemTests(unittest.TestCase):
             def event(self, *args, **kwargs): self.events.append((args, kwargs))
         runner = Runner()
         content = [{'concept_id': 'C0', 'extracted_items': [{'value': {
-            'value_text': 'Two parties', 'quote': 'Two parties decide.', 'evidence_level': 'primary',
+            'value_text': 'Two parties', 'source_quote_id': 'Q1', 'evidence_level': 'primary',
             'confidence': 'medium', 'coverage_status': 'covered', 'applicability_reason': ''},
             'justification': 'Synthetic test source says two parties.',
             'reference_paragraphs': [{'reference_paragraph_id': 'P1', 'reference_sentence_ids': ['P1-S0']},
@@ -325,17 +339,14 @@ class ContextGemTests(unittest.TestCase):
             self.assertEqual(kwargs['temperature'], 0.0)
             self.assertEqual(kwargs['num_retries'], 0)
             self.assertEqual(kwargs['max_retries'], 0)
-            wire_schema = kwargs['response_format']['json_schema']
-            self.assertIs(wire_schema['strict'], True)
-            value_schema = wire_schema['schema']['$defs']['ContextGemValue']['properties']
-            self.assertEqual(value_schema['quote']['maxLength'], 50)
-            self.assertEqual(value_schema['confidence']['enum'], ['low', 'medium'])
+            self.assertNotIn('response_format', kwargs)
             body_prompt = next(m['content'] for m in kwargs['messages'] if m['role'] == 'user')
+            self.assertIn('Source quote choices', body_prompt)
             for phrase in ('timing protocols', 'vulnerable to asymmetric', 'Hong–Ou–Mandel (HOM)'):
                 self.assertIn(phrase, body_prompt)
             for joined in ('timingprotocols', 'toasymmetric', 'Mandel(HOM)'):
                 self.assertNotIn(joined, body_prompt)
-            return ModelResponse(model='gpt-4o-mini', choices=[{'message': {'role': 'assistant', 'content': json.dumps({'concepts': content})}}],
+            return ModelResponse(model='gpt-4o-mini', choices=[{'message': {'role': 'assistant', 'content': json.dumps(content)}}],
                 usage={'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2})
         body = ('Two parties decide. Evidence exists. Classical two–way timing\nprotocols are '
                 'vulnerable to\nasymmetric channel delays. Bidirectional Hong–Ou–Mandel\n(HOM) interferometry.')
@@ -348,7 +359,22 @@ class ContextGemTests(unittest.TestCase):
         self.assertEqual([r['sentence_index'] for r in result['candidates'][0]['references']], [0, 1])
         self.assertTrue(any(args[0] == 'contextgem_reference_deduplication' for args, _ in runner.events))
         raw = next(data['content'] for args, data in runner.events if args[0] == 'model_response')
-        self.assertEqual(len(json.loads(raw)['concepts'][0]['extracted_items'][0]['reference_paragraphs']), 2)
+        self.assertEqual(len(json.loads(raw)[0]['extracted_items'][0]['reference_paragraphs']), 2)
+        self.assertEqual(json.loads(raw)[0]['extracted_items'][0]['value']['source_quote_id'], 'Q1')
+        # A real choice from another sentence must not repair wrong model references.
+        item_value = content[0]['extracted_items'][0]['value']
+        item_value['source_quote_id'] = next(qid for qid, quote in runner.extraction_quote_options.items()
+                                   if quote.startswith('Classical'))
+        with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', completion):
+            result = asyncio.run(extract(runner, {'target_cells': ['problem_definition/TEST-0001.parties_and_roles']},
+                [{'location': 'page:1', 'text': 'Two parties decide.'}, {'location': 'page:2', 'text': body}]))
+        self.assertEqual(result['candidates'], [])
+        self.assertTrue(any(args[0] == 'failure' and data.get('failure_type') == 'quote_not_found'
+                            for args, data in runner.events))
+        failure = next(data for args, data in reversed(runner.events) if args[0] == 'failure')
+        self.assertEqual(failure['raw_value']['source_quote_id'], item_value['source_quote_id'])
+        self.assertEqual(failure['value']['quote'], runner.extraction_quote_options[item_value['source_quote_id']])
+        item_value['source_quote_id'] = 'Q1'
         # Actual ContextGem bulk validator must never see the rejected high item.
         bad = deepcopy(content[0]); bad['concept_id'] = 'C1'
         bad['extracted_items'][0]['value']['confidence'] = 'high'
@@ -361,29 +387,29 @@ class ContextGemTests(unittest.TestCase):
             result = asyncio.run(extract(runner, context, segments))
         self.assertEqual(len(result['candidates']), 1)
         self.assertTrue(any(args[0] == 'contract_rejection' for args, _ in runner.events))
+        # Unknown IDs and free text cannot be substituted or clipped into a choice.
+        for changes in ({'source_quote_id': 'Q-unknown'}, {'source_quote_id': 'Q1', 'quote': 'x' * 51}):
+            with self.subTest(changes=changes):
+                bad['extracted_items'][0]['value'].update(confidence='medium', **changes)
+                with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', completion):
+                    result = asyncio.run(extract(runner, context, segments))
+                self.assertEqual([c['field'] for c in result['candidates']], ['parties_and_roles'])
+                self.assertEqual(result['candidates'][0]['quote'], 'Two parties decide.')
+                rejection = next(data for args, data in reversed(runner.events) if args[0] == 'contract_rejection')
+                self.assertEqual(rejection['candidate'], bad['extracted_items'][0])
+                self.assertIn('source quote ID', rejection['validation_errors'][0]['msg'])
         content[0]['extracted_items'][0]['value']['confidence'] = 'high'
         from searchos_online import ContractViolation
         with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', completion):
             with self.assertRaises(ContractViolation):
                 asyncio.run(extract(runner, context, segments))
-        self.assertEqual(runner.calls, 3)
+        self.assertEqual(runner.calls, 6)  # One request per extraction; no item repair or fallback.
         self.assertEqual(segments[1]['text'], body)
-        from litellm import BadRequestError, UnsupportedParamsError
-        for error in (UnsupportedParamsError, BadRequestError):
-            async def unsupported(**kwargs):
-                raise error('Schema unsupported', model=profile.model, llm_provider='openai')
-            with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', unsupported):
-                with self.assertRaises(ContractViolation):
-                    asyncio.run(extract(runner, context, segments))
-        self.assertEqual(runner.calls, 5)  # No parameter-dropping retry or extraction fallback.
-        self.assertTrue(any(args[0] == 'failure' and data.get('failure_type') == 'structured_output_rejected'
-                            for args, data in runner.events))
-
 
 
 class ContextContractTests(unittest.TestCase):
     def test_missing_admission_is_empty_and_false_evidence_is_preserved(self):
-        from contextgem_extractor import document_for, candidates_from, isolate_contract_items, response_contract
+        from contextgem_extractor import document_for, candidates_from, isolate_contract_items
         from pydantic import ValidationError
         segments = [{'location': 'page:1', 'text': 'Classical transfer can run in parallel.'}]
         doc = document_for(segments, {'target_cells': [
@@ -391,24 +417,16 @@ class ContextContractTests(unittest.TestCase):
         value = {'value_text': 'false', 'quote': 'Classical transfer', 'evidence_level': 'primary',
                  'confidence': 'medium', 'coverage_status': 'covered', 'applicability_reason': ''}
         validator = doc.concepts[0]._get_structure_validator()
-        self.assertEqual(validator.model_validate(value).value_text, 'false')
+        wire_value = {k: v for k, v in value.items() if k != 'quote'} | {'source_quote_id': 'Q0'}
+        self.assertEqual(validator.model_validate(wire_value).value_text, 'false')
         for change in ({'value_text': 'insufficient_evidence'}, {'coverage_status': 'not_applicable'}):
             with self.assertRaises(ValidationError):
-                validator.model_validate({**value, **change})
+                validator.model_validate({**wire_value, **change})
         empty = candidates_from(doc, segments)
         self.assertEqual(empty['candidates'], [])
         self.assertEqual(set(empty['missing']), {'C2', 'C3'})
         item = {'value': value, 'justification': 'Explicit classical transfer.',
                 'reference_paragraphs': [{'reference_paragraph_id': 'P0', 'reference_sentence_ids': ['P0-S0']}]}
-        contract = response_contract(doc)
-        wire = {'concepts': [{'concept_id': 'C0', 'extracted_items': [item]},
-                             {'concept_id': 'C1', 'extracted_items': []}]}
-        self.assertEqual(contract.model_validate(wire).concepts[0].extracted_items[0].value.value_text, 'false')
-        for change in ({'confidence': 'high'}, {'quote': 'x' * 51}, {'value_text': 'insufficient_evidence'}):
-            invalid = deepcopy(wire)
-            invalid['concepts'][0]['extracted_items'][0]['value'].update(change)
-            with self.assertRaises(ValidationError):
-                contract.model_validate(invalid)
         bad = deepcopy(item); bad['value'].update(value_text='insufficient_evidence', coverage_status='not_applicable')
         raw = [{'concept_id': 'C0', 'extracted_items': [item]}, {'concept_id': 'C1', 'extracted_items': [bad]}]
         filtered, rejected, retained = isolate_contract_items(
