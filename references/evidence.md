@@ -85,7 +85,7 @@ DOI、arXiv、规范化 URL 记录别名，版本号单独保留；同一文档�
 ## 写入前的源接地验证门
 
 每批证据候选先调用 `scripts/validate_grounding.py`，或显式调用 SearchOS access skill
-`assets/quantum_grounding`，接口及示例见 integration.md。
+`assets/quantum_grounding`，使用现有 adapter/CLI 接口，参数查各脚本 --help。
 验证本 run 的 opened 正文、source_id、文档版本、非空 quote/location，并检查引文
 逐字或[受限提取格式归一](../assets/quantum_grounding/skill.md)后的存在性，记录原始提取文本 SHA256 和字符偏移；不做 NFKC 或数字/大小写/否定词改写。
 OCR 错字、数字/否定词变化、近似句子不自动放行。模糊搜索可辅助定位后修正引文。
@@ -109,5 +109,20 @@ production 仍须通过原有字段/单位/两来源检查，字符串门不替�
 case_description 应明确案例身份，不能只提供无定义的内部编号。上下文不足时保留不确定，不靠文献深度猜测。
 
 归属通过后，用独立请求核查语义支持、位置及该字段规则，特别检查否定、条件、威胁模型和组件/整体边界。
-代码执行边界统一见 [判断层级表](../SKILL.md#约束执行层级)。
-模型拆分不是正确性保证；两次调用可以同模型，但错误可能相关。契约、导入和缓存见 integration.md。
+代码执行边界统一见 [执行约束](../SKILL.md#执行约束)。
+模型拆分不是正确性保证；两次调用可以同模型，但错误可能相关。调用、缓存与状态见 [执行流程](workflow.md)。
+
+## 反证与复核记录
+
+review_contract=4；每项语义判断包含counter_evidence_search：segments_searched、negation_found、conditional_limits_found、threat_model_boundary_found、对应三个*_evidence对象列表、contradictions_found与summary。
+每个true必须对应非空举证列表，false只能空列表；每项举证/矛盾含location及1–50字符连续原文quote，location在实际提供并声明搜索的分段内。summary为1–2000字符且非空白，说明发现及其对结论的影响；不声称搜索未提供全文。
+发现却无法合规举证属于counter_evidence_unsubstantiated，不能改报false或用abstain绕过；结构/接地失败共用一次格式纠错，保留原响应与实际长度，最终违规error/contract_violation。
+suppressed_findings仅防同candidate_index三个flag的true→false，不比较矛盾列表/summary，不发现首次遗漏；counter_search_valid不能补足这些缺口。字段合规不证明反证搜索充分。
+归属/语义分别保存并绑定同report_id/candidate_index、case_id、value_text、location、source_sha256；review_policy.supported_pair统一校验，不另设宽松守卫。FILLED还须来源opened、无冲突、归属attributed、语义supported、location_checked=true、domain_rule_met=met。
+
+## 自检、人工与成本
+
+coverage_policy按同案例同Track重算链；self_audit从原始grounding/attributions/reviews、正文哈希与原始请求重算，不接受witness快照当真值，失败保留具体missing_fields/原因。
+人工记录只能由真人提供；agent自检不计。最低样本数min(eligible,max(3,ceil(eligible*10%)))，实际从配置快照取值；覆盖<5%严重提示，仅作质量标签，不阻塞覆盖停止。零候选覆盖/精确率unknown，候选不足取全部。
+human_audit_status保留not_applicable/unverified/partial/verified/rejected，链外人工判错也令案例rejected。停止时case_audit快照不因补录改写，当前标签按最新attribution_checks重算；精确率只针对已抽样候选，不能外推总体。
+成本按call_id关联开始/响应，ContextGem内部、纠错和失败尝试均计调用；usage或USD价格无回执保留unknown，不补零、不自行估价。记录实际模型和白名单参数；不同reviewer ID不保证模型误差独立。

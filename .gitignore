@@ -21,3 +21,6 @@ venv/
 # Generated output
 /artifacts/
 /logs/
+
+# Local archives are not active skill contents.
+archive/

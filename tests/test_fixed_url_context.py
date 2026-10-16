@@ -73,3 +73,6 @@ class FixedURLContextTests(unittest.TestCase):
         self.assertNotIn('Unique body 3.', payload['surrounding_text'])
         self.assertEqual(payload['location'], 'page:1')
         self.assertEqual(payload['quote'], self.candidate['quote'])
+        self.assertEqual(payload['candidate_field'], self.candidate['field'])
+        self.assertEqual(payload['candidate_value'], self.candidate['value_text'])
+        self.assertEqual(payload['reference_sentences'], extraction['candidates'][0].get('references', []))

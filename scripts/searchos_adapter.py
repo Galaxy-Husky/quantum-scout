@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# State ownership and upstream API contract: references/searchos-boundary.md
+# State ownership and upstream API contract: references/workflow.md
 """Local Quantum Scout adapter for SearchOS SOCM; no model or search calls."""
 import argparse
 import asyncio

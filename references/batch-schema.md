@@ -72,9 +72,9 @@ checkpoint.completed 不同。操作性停止的 final=true、completed=false；
 ## 派生诊断与问题定义完成度
 
 在线导出的缺失问题字段含 reason_source=explicit_gap/none；定义与 pending_kind 见
-[审计层](audit-layer.md#预算与派生诊断)。默认 reason 不再补齐定义完成度，历史批次不自动重写。
+[执行流程](workflow.md#状态导出与兼容)。默认 reason 不再补齐定义完成度，历史批次不自动重写。
 quality.model_calls 区分 invocation/workspace；cost_breakdown 保留 workspace 累计及未知价格。
-人工质量标签见 [审计层](audit-layer.md#成本与人工审计)。
+人工质量标签见 [证据协议](evidence.md#自检人工与成本)。
 
 ## 案例覆盖与在线导出
 
@@ -93,7 +93,7 @@ completed 只表示本次配置范围内覆盖停止，不表示准入/评分达
 `attribution_check_count` 保存停止时追加式 attribution_checks 的长度；导出守卫按该前缀重算历史统计，
 case_audit 若存在须匹配，但不要求 audit_passed=true；self_audit 必须通过且绑定重算覆盖链。
 `cases[*].human_audit_status` 和 case_audit 则按最新全部 attribution_checks 重算；不得以停止快照覆盖当前标签。
-候选去重、链外错误、状态和阈值算法见 [审计层](audit-layer.md#成本与人工审计)。
+候选去重、链外错误、状态和阈值算法见 [证据协议](evidence.md#自检人工与成本)。
 
 问题定义和 `tracks.<id>.criteria_evidence/score_evidence` 中每项含原证据字段及
 `attribution_review`（attribution=attributed、attribution_reason）及 `semantic_review`（supported、location_checked=true、domain_rule_met=met、domain_rule_reason）；两者分别有 reviewer_kind/reviewer_id，并绑定同一 report_id/candidate_index、case_id、value_text、location、source_sha256，候选 grounding.source_sha256 必须一致，
@@ -111,7 +111,7 @@ audited_correct/audited_incorrect、attribution_precision 和 audit_coverage。
 精确率只针对已人工抽查的双复核通过候选；无样本时 null，渲染 unknown。抽查覆盖率单独展示，不外推总体准确率。
 
 quality 可含 cost_breakdown 分类账本；attribution 含审计阈值、required_audit_samples、audit_warning。
-具体含义见 [审计层](audit-layer.md)。
+具体含义见 [证据协议](evidence.md#自检人工与成本)。
 
 在线导出附 config_snapshot/config_sha256；覆盖守卫校验摘要后按 workspace 快照重算，避免安装配置变化改变审计门。
 
@@ -122,10 +122,16 @@ error 停止可在 checkpoint.operational_cause 与 stop_evidence.error_kind 标
 
 sources[*].citation_identity 保留 state/reason、expected_title 和 checks（实际执行的每服务结果），
 cross_check 为 disabled/citation_unverified/cross_check_partial/cross_check_verified/cross_check_conflict。
-具体状态机见 [身份契约](citation-identity.md#三态分歧与版本)。unknown 不降低正文证据，
+具体状态机见 [身份与扩展流程](workflow.md#引用身份与扩展)。unknown 不降低正文证据，
 mismatch/跨服务冲突阻止相关来源候选，source_depth=unverified，grounding_failures 保留 citation_mismatch。
 关闭引用服务时仍记录 source.metadata_identifier_conflict 和 trace_consistency 警告，保留 URL/发现元数据标识；identity 仍为 unknown/backend_disabled，不阻止入图，不把本地线索冒充外部核验。启用服务时原 mismatch 门保持。
 
 quality.citation_identity 记录 enabled_backends、status、scope、requests_consumed、max_requests；
 关闭时明确未启用且不生成 citation_unverified，启用后 unknown 才警告。部分核验与冲突有独立 warning category。
 每请求回执在 adapter 的 online.citation_requests 和 citation_identity 事件中保留，导出不反写事实。
+
+## 派生状态补充
+
+reason_source=explicit_gap只来自原始gaps非空reason，否则none/null；不自动补齐问题定义。
+round_interrupted.pending_stage优先最早无响应call_id（awaiting_response）；均已响应但下一步受预算阻止为next_stage_blocked_by_budget，契约拒绝为contract_rejected；非模型中断无对应阶段为null。
+field_diagnostics仅派生已记录的多原因；not_attempted/diagnosis_unavailable不是失败计数，单篇无候选不是案例缺证结论，provided_segments不等于整表复核完成。引用响应保留实际哈希/范围，2MB超限前缀不能冒充完整响应；日志不保存密钥。
