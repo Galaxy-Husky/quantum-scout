@@ -193,6 +193,11 @@ class CounterQuoteSpanSelection(Contract):
 class CounterQuoteSpanSelections(Contract):
     selections: list[CounterQuoteSpanSelection] = Field(min_length=1)
 
+    @model_validator(mode='before')
+    @classmethod
+    def wrap_selection_list(cls, value):
+        return {'selections': value} if isinstance(value, list) else value
+
 
 class CounterQuoteFidelityFinding(Contract):
     judgment_index: StrictInt = Field(ge=0)
@@ -425,8 +430,10 @@ def doctor(config, source_urls=()):
         problems.append('contextgem is not installed')
     else:
         try:
-            from contextgem_extractor import make_llm
-            make_llm(type('Probe', (), {'config': config})())
+            from contextgem_extractor import document_for, make_llm
+            probe = document_for([{'text': 'Construction check only.', 'location': 'preflight'}],
+                {'target_cells': ['problem_definition/TEST-0001.real_world_problem']})
+            make_llm(type('Probe', (), {'config': config})(), probe)
         except Exception as exc:
             problems.append('contextgem construction failed: ' + type(exc).__name__)
     from citation_backends import identity_backends, expansion_backend
@@ -559,7 +566,7 @@ class OnlineRunner:
         parameters = {k: v for k, v in (parameters or {}).items()
                       if k in {'temperature', 'max_tokens', 'top_p', 'seed', 'timeout', 'max_retries'}
                       and (v is None or type(v) in {str, int, float, bool})}
-        if response_format == {'type': 'json_object'}:
+        if isinstance(response_format, dict) and response_format.get('type') in {'json_object', 'json_schema'}:
             parameters['response_format'] = response_format
         self.last_model_calls[contract] = {'call_id': call_id, 'model': model_name, 'parameters': parameters}
         self.event('model_call_started', call_id=call_id, role=role, model=model_name, parameters=parameters,
@@ -613,19 +620,10 @@ class OnlineRunner:
                 raw = ExtractionEnvelope.model_validate_json(content)
                 fields = [c.rsplit('.', 1)[1] for c in data.get('target_cells', [])]
                 return self.validate_extraction(raw.model_dump(), fields, call_id)
+            parsed = contract.model_validate_json(content)
             if contract is CounterQuoteSpanSelections and content.startswith('['):
-                # Keep every item/value unchanged; item schema, target binding and
-                # source grounding still apply. Raw model_response stays untouched.
-                try:
-                    replacement_list = json.loads(content)
-                except ValueError:
-                    parsed = contract.model_validate_json(content)
-                else:
-                    parsed = contract.model_validate({'selections': replacement_list})
-                    self.event('counter_quote_envelope_normalized', call_id=call_id,
-                               content=parsed.model_dump())
-            else:
-                parsed = contract.model_validate_json(content)
+                self.event('counter_quote_envelope_normalized', call_id=call_id,
+                           content=parsed.model_dump())
             if contract is Judgments and data.get('rejected_response'):
                 suppressed = suppressed_findings(data['rejected_response'], parsed.judgments)
                 if suppressed:
@@ -674,9 +672,6 @@ class OnlineRunner:
                     replacements = selected_counter_quotes(selected, targets, data['context_segments'])
                     repair_contract = 'CounterQuoteSpanSelections'
                     key = lambda t: (t['judgment_index'], t['group'], t['finding_index'])
-                    if (len(replacements) != len(targets)
-                            or {key(t) for t in replacements} != {key(t) for t in targets}):
-                        raise ContractViolation('Quote repair must replace every rejected finding exactly once')
                     patched = json.loads(content)
                     for replacement in replacements:
                         ji, group, fi = key(replacement)
@@ -1007,6 +1002,10 @@ class OnlineRunner:
         if attribution is None:
             result = await self.call('judge',
                 'Judge ONLY attribution to the target case, not semantic support or domain-rule compliance. '
+                'Do not impose a section requirement: an explicit description of the target system in '
+                'a conclusion or results section can establish identity. Whether that passage supports '
+                'real_world_problem, existing_practice or another field is for the separate semantic '
+                'review, and is not grounds by itself for absent or abstained here. '
                 'attributed requires explicit identification of the target protocol/system or a documented direct link. '
                 'General background, shared authors, similar physics, and being cited by the root paper are not attribution. '
                 'A concrete deployment scenario counts as an explicit case even if it is a research deployment rather than a commercial one; general motivation paragraphs that state only research background remain absent. '
