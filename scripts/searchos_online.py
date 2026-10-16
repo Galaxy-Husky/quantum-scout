@@ -214,6 +214,29 @@ class CounterQuoteFidelity(Contract):
     findings: list[CounterQuoteFidelityFinding] = Field(min_length=1)
 
 
+def counter_quote_eligible(quote, grounded_original=None):
+    """Conservative lexical exclusions, never a semantic support decision.
+
+    Preserve explicit English negation when shortening a grounded quote. This
+    deliberately cannot resolve negation scope, implicit negatives or other languages.
+    Nonverbatim historical text is not evidence and supplies no required markers.
+    """
+    words = re.findall(r"\w+", quote.casefold())
+    function_words = set("it this that these those he she they them his her their its "
+                         "a an the if then is are was were be been being to of in on at "
+                         "and or but as by for with from which who when where we you i".split())
+    if (not any(character.isalpha() for character in quote)
+            or all(word in function_words for word in words)):
+        return False
+    if grounded_original is not None:
+        pattern = r"\b(?:no|not|never|neither|nor|without|cannot)\b|\b\w+n['’]t\b"
+        original = re.findall(pattern, grounded_original.casefold())
+        retained = re.findall(pattern, quote.casefold())
+        if any(retained.count(marker) < original.count(marker) for marker in set(original)):
+            return False
+    return True
+
+
 def counter_quote_options(targets, segments):
     """List exact short source spans; the model, never this helper, chooses the evidence."""
     from validate_grounding import grounding_gate
@@ -227,13 +250,24 @@ def counter_quote_options(targets, segments):
         # nonverbatim quotes, retain the original location as the search scope.
         base, limit = bounds[:2] if bounds else (0, len(text))
         tokens = list(re.finditer(r'\S+', text[base:limit]))
+        # Never split a source percentage between its number and unit (including
+        # an approximation/comparison sign). Offsets refer to the full raw page,
+        # so a pre-existing short quote boundary cannot hide a following unit.
+        percentages = list(re.finditer(
+            r'(?:[≈~<>≤≥]\s*)?[+−-]?\d+(?:[.,]\d+)*(?:[eE][+−-]?\d+)?\s*[%％‰]', text))
         options = []
         for start, token in enumerate(tokens):
             for end in range(start + 1, len(tokens) + 1):
-                quote = text[base + token.start():base + tokens[end - 1].end()]
+                left, right = base + token.start(), base + tokens[end - 1].end()
+                quote = text[left:right]
                 if len(quote) > 50:
                     break
-                options.append({'option_id': len(options), 'quote': quote})
+                if any(left < match.end() and right > match.start()
+                       and not (left <= match.start() and right >= match.end())
+                       for match in percentages):
+                    continue
+                if counter_quote_eligible(quote, text[base:limit] if bounds else None):
+                    options.append({'option_id': len(options), 'quote': quote})
         result.append({**{k: target[k] for k in ('judgment_index', 'group', 'finding_index', 'location')},
                        'options': options})
     return result
@@ -659,7 +693,7 @@ class OnlineRunner:
                     # rejected response or edit any finding, flag, location, summary or verdict.
                     options = counter_quote_options(targets, data['context_segments'])
                     if any(not row['options'] for row in options):
-                        raise ContractViolation('No source quote option satisfies the 1-50 character contract')
+                        raise ContractViolation('No source quote option satisfies the length and lexical preservation guards')
                     repair_context = {
                         'targets': targets,
                         'original_judgments': json.loads(content)['judgments'],

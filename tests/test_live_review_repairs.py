@@ -242,6 +242,51 @@ class LiveReviewRepairTests(unittest.TestCase):
         self.assertTrue(all(o['quote'] in quote for o in options))
         self.assertIn('could introduce asymmetric delays', [o['quote'] for o in options])
 
+    def test_repair_catalog_excludes_empty_words_and_preserves_grounded_negation(self):
+        # Observed run25 failures: isolated "it" and a shortened quote dropping "no".
+        original = 'no further assumptions are made about the internal workings'
+        target = {'judgment_index': 0, 'group': 'threat_model_boundary_evidence',
+                  'finding_index': 0, 'location': 'page:1', 'quote': original,
+                  'reason': 'quote_too_long'}
+        options = counter_quote_options([target], [{'location': 'page:1', 'text': original}])[0]['options']
+        quotes = [o['quote'] for o in options]
+        self.assertNotIn('assumptions are made about the internal workings', quotes)
+        self.assertIn('no further assumptions are made', quotes)
+        self.assertTrue(all('no' in q.split() for q in quotes))
+        target.update(quote='it not the case... aborts', reason='counter_evidence_quote_not_found')
+        text = 'If this is not the case, it aborts.'
+        quotes = [o['quote'] for o in counter_quote_options([target],
+                  [{'location': 'page:1', 'text': text}])[0]['options']]
+        self.assertNotIn('it', quotes)
+        self.assertNotIn('If this', quotes)
+        self.assertIn('it aborts.', quotes)
+        # Do not require an invented negation from rejected nonverbatim wording.
+        self.assertIn(text, quotes)
+
+    def test_source_percentages_cannot_lose_unit_or_comparison(self):
+        target = {'judgment_index': 0, 'group': 'conditional_limits_evidence',
+                  'finding_index': 0, 'location': 'page:4',
+                  'quote': 'detection efficiency... is ≈ 2 %',
+                  'reason': 'counter_evidence_quote_not_found'}
+        for quantity in ['≈ 2 %', '≤ 2.5 %', '2\n%', '2％', '2‰']:
+            text = 'efficiency is ' + quantity + ', necessitating many attempts'
+            quotes = [o['quote'] for o in counter_quote_options([target],
+                      [{'location': 'page:4', 'text': text}])[0]['options']]
+            with self.subTest(quantity=quantity):
+                self.assertNotIn('≈ 2', quotes)
+                self.assertNotIn('efficiency is ≈ 2', quotes)
+                self.assertNotIn('efficiency is ≤ 2.5', quotes)
+                self.assertNotIn('efficiency is 2', quotes)
+                self.assertNotIn(quantity, quotes)  # Bare quantity is not a finding.
+                self.assertIn(quantity + ', necessitating many attempts', quotes)
+                self.assertTrue(all(q in text and len(q) <= 50 for q in quotes))
+        # Numbers remain selectable when they carry substantive source wording.
+        text = 'from 1.5 million Bell pairs'
+        quotes = [o['quote'] for o in counter_quote_options([target],
+                  [{'location': 'page:4', 'text': text}])[0]['options']]
+        self.assertIn(text, quotes)
+        self.assertNotIn('1.5', quotes)
+
     def test_unselectable_long_token_is_not_clipped(self):
         target = {'judgment_index': 0, 'group': 'conditional_limits_evidence', 'finding_index': 0,
                   'location': 'page:1', 'quote': 'x' * 51, 'reason': 'quote_too_long'}
