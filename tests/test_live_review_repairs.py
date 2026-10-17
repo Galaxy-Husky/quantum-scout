@@ -33,6 +33,22 @@ class SelectingModel(fixtures.Model):
                 option = next(option for option in row['options'] if option['quote'] == wanted['quote'])
                 selections.append({**{k: wanted[k] for k in key}, 'option_id': option['option_id']})
             response.content = json.dumps(selections if raw.get('bare_array') else {'selections': selections})
+        if isinstance(raw, dict) and 'findings' in raw:
+            data = json.loads(messages[1][1])
+            if 'replacements' in data:
+                findings = []
+                for f in raw['findings']:
+                    if 'quote_id' in f:
+                        findings.append(f)
+                        continue
+                    matches = [r for r in data['replacements'] if all(r[k] == f[k]
+                        for k in ('judgment_index', 'group', 'finding_index'))
+                        and r['quote'] == f['selected_quote']]
+                    findings.append({'quote_id': matches[0]['quote_id'] if matches else 'unknown-id',
+                                     'support': f['support'], 'reason': f['reason']})
+                response.content = json.dumps({'findings': findings})
+                if getattr(self, 'on_fidelity', None):
+                    self.on_fidelity()
         return response
 
 
@@ -50,6 +66,7 @@ class LiveReviewRepairTests(unittest.TestCase):
 
     def run_outputs(self, outputs):
         judge = SelectingModel(outputs)
+        judge.on_fidelity = getattr(self, 'on_fidelity', None)
         runner = OnlineRunner(self.path, self.config,
             models={'extraction': fixtures.Model(self.extraction), 'judge': judge},
             providers={'serper': self.provider}, opener=self.opener, extractor=self.extractor)
@@ -177,7 +194,7 @@ class LiveReviewRepairTests(unittest.TestCase):
         self.assertEqual(meta['reviews'], [])
         self.assertFalse(any(e['kind'] == 'counter_quote_repair' for e in meta['online']['events']))
 
-    def test_fidelity_echo_preserves_selected_source_whitespace(self):
+    def test_fidelity_id_restores_selected_source_whitespace(self):
         original_opener = self.opener
         async def opener(*args):
             source = await original_opener(*args)
@@ -188,10 +205,40 @@ class LiveReviewRepairTests(unittest.TestCase):
         self.opener = opener
         result, meta, judge = self.run_outputs([
             self.output('Two...decide.'), self.choice('Two\nparties decide.'),
-            self.fidelity(quote='Two parties decide.')])
+            self.fidelity(quote='Two\nparties decide.')])
         self.assertEqual(result['model_calls'], 5)
+        self.assertEqual(result['coverage']['filled'], 1)
+        self.assertEqual(meta['reviews'][0]['counter_evidence_search']['conditional_limits_evidence'][0]['quote'],
+                         'Two\nparties decide.')
+        raw = [e for e in meta['online']['events'] if e['kind'] == 'model_response'][-1]
+        self.assertEqual(set(json.loads(raw['content'])['findings'][0]), {'quote_id', 'support', 'reason'})
+
+    def test_duplicate_or_missing_fidelity_ids_reject_entire_judgment(self):
+        bad, good, repairs = self.boundary_outputs()
+        self.boundary_fidelity['findings'][1] = deepcopy(self.boundary_fidelity['findings'][0])
+        result, meta, judge = self.run_outputs([bad, repairs, self.boundary_fidelity])
         self.assertEqual(result['operational_cause'], 'contract_violation')
         self.assertEqual(meta['reviews'], [])
+
+    def test_missing_fidelity_finding_rejects_entire_judgment(self):
+        bad, good, repairs = self.boundary_outputs()
+        self.boundary_fidelity['findings'].pop()
+        result, meta, judge = self.run_outputs([bad, repairs, self.boundary_fidelity])
+        self.assertEqual(result['operational_cause'], 'contract_violation')
+        self.assertEqual(meta['reviews'], [])
+
+    def test_changed_saved_fidelity_input_is_rejected(self):
+        def tamper():
+            meta = adapter.load(self.path)
+            event = next(e for e in meta['online']['events']
+                         if e.get('output_contract') == 'CounterQuoteFidelity')
+            event['input']['replacements'][0]['quote'] = 'changed evidence'
+            adapter.persist(self.path, meta)
+        self.on_fidelity = tamper
+        result, meta, judge = self.run_outputs([self.output('Two...decide.'), self.choice(), self.fidelity()])
+        self.assertEqual(result['operational_cause'], 'contract_violation')
+        self.assertEqual(meta['reviews'], [])
+        self.assertFalse(any(e['kind'] == 'counter_quote_repair' for e in meta['online']['events']))
 
     def test_selection_rejects_generated_text_without_another_attempt(self):
         repairs = {'replacements': [{'judgment_index': 0, 'group': 'conditional_limits_evidence',
@@ -210,7 +257,7 @@ class LiveReviewRepairTests(unittest.TestCase):
         selection = {'judgment_index': 0, 'group': 'conditional_limits_evidence',
                      'finding_index': 1, 'option_id': option['option_id']}
         def choose(items):
-            return selected_counter_quotes(CounterQuoteSpanSelections(selections=items), targets, segments)
+            return selected_counter_quotes(CounterQuoteSpanSelections(selections=items), targets, counter_quote_options(targets, segments))
         self.assertEqual(choose([selection])[0]['quote'], 'Two\nparties\tdecide.')
         for change in ({'finding_index': 0}, {'option_id': len(options)}):
             with self.subTest(change=change), self.assertRaises(ContractViolation):
@@ -240,7 +287,7 @@ class LiveReviewRepairTests(unittest.TestCase):
         text = 'Unrelated security statement. ' + quote + '. Other claims.'
         options = counter_quote_options([target], [{'location': 'page:4', 'text': text}])[0]['options']
         self.assertTrue(all(o['quote'] in quote for o in options))
-        self.assertIn('could introduce asymmetric delays', [o['quote'] for o in options])
+        self.assertTrue(any('could introduce asymmetric delays' in o['quote'] for o in options))
 
     def test_repair_catalog_excludes_empty_words_and_preserves_grounded_negation(self):
         # Observed run25 failures: isolated "it" and a shortened quote dropping "no".
@@ -251,7 +298,7 @@ class LiveReviewRepairTests(unittest.TestCase):
         options = counter_quote_options([target], [{'location': 'page:1', 'text': original}])[0]['options']
         quotes = [o['quote'] for o in options]
         self.assertNotIn('assumptions are made about the internal workings', quotes)
-        self.assertIn('no further assumptions are made', quotes)
+        self.assertTrue(any('no further assumptions are made' in q for q in quotes))
         self.assertTrue(all('no' in q.split() for q in quotes))
         target.update(quote='it not the case... aborts', reason='counter_evidence_quote_not_found')
         text = 'If this is not the case, it aborts.'
@@ -287,6 +334,43 @@ class LiveReviewRepairTests(unittest.TestCase):
         self.assertIn(text, quotes)
         self.assertNotIn('1.5', quotes)
 
+    def test_grounded_long_finding_keeps_context_instead_of_isolated_noun(self):
+        original = ('necessitating a platform capable of distributing and measuring '
+                    'high-quality entangled states while closing the detection loophole.')
+        target = {'judgment_index': 0, 'group': 'conditional_limits_evidence',
+                  'finding_index': 0, 'location': 'page:1', 'quote': original,
+                  'reason': 'quote_too_long'}
+        quotes = [o['quote'] for o in counter_quote_options([target],
+                  [{'location': 'page:1', 'text': 'Unrelated. ' + original + ' Other claims.'}])[0]['options']]
+        self.assertNotIn('loophole.', quotes)
+        self.assertIn('states while closing the detection loophole.', quotes)
+        self.assertTrue(all(q in original and len(q) <= 50 for q in quotes))
+
+    def test_deduplicated_grounded_quote_still_requires_fidelity(self):
+        original = ('necessitating a platform capable of distributing and measuring '
+                    'high-quality entangled states while closing the detection loophole.')
+        selected = 'states while closing the detection loophole.'
+        original_opener = self.opener
+        async def opener(*args):
+            source = await original_opener(*args)
+            source['segments'][0]['text'] += ' ' + original
+            source['text'] = '[paragraph:1]\n' + source['segments'][0]['text']
+            return source
+        self.opener = opener
+        result, meta, _ = self.run_outputs([
+            self.output(original), self.choice(selected),
+            self.fidelity(support='unclear', quote=selected)])
+        self.assertEqual(result['model_calls'], 5)
+        self.assertEqual(result['operational_cause'], 'contract_violation')
+        self.assertEqual(meta['reviews'], [])
+        findings = next(e['findings'] for e in meta['online']['events']
+                        if e['kind'] == 'counter_quote_fidelity')
+        request = next(e['input'] for e in meta['online']['events']
+                       if e.get('output_contract') == 'CounterQuoteFidelity')
+        self.assertEqual(next(r['quote'] for r in request['replacements']
+                              if r['quote_id'] == findings[0]['quote_id']), selected)
+        self.assertEqual(findings[0]['support'], 'unclear')
+
     def test_unselectable_long_token_is_not_clipped(self):
         target = {'judgment_index': 0, 'group': 'conditional_limits_evidence', 'finding_index': 0,
                   'location': 'page:1', 'quote': 'x' * 51, 'reason': 'quote_too_long'}
@@ -294,7 +378,7 @@ class LiveReviewRepairTests(unittest.TestCase):
         self.assertEqual(counter_quote_options([target], segments)[0]['options'], [])
         with self.assertRaises(ContractViolation):
             selected_counter_quotes(CounterQuoteSpanSelections(selections=[{'judgment_index': 0,
-                'group': 'conditional_limits_evidence', 'finding_index': 0, 'option_id': 0}]), [target], segments)
+                'group': 'conditional_limits_evidence', 'finding_index': 0, 'option_id': 0}]), [target], counter_quote_options([target], segments))
 
     def test_length_and_grounding_share_one_repair_allowance(self):
         result, meta, judge = self.run_outputs([self.output('x' * 51), self.output('Two...decide.')])
@@ -319,7 +403,8 @@ class LiveReviewRepairTests(unittest.TestCase):
                       threat_model_boundary_found=True, threat_model_boundary_evidence=[
             {'location': 'paragraph:1', 'quote': quote} for quote in quotes])
         good = deepcopy(bad)
-        excerpts = ['security against intercept-resend', 'could introduce asymmetric delays']
+        excerpts = ['IV analyzes security against intercept-resend',
+                    'tampering could introduce asymmetric delays']
         for finding, quote in zip(good['judgments'][0]['counter_evidence_search'][
                 'threat_model_boundary_evidence'], excerpts):
             finding['quote'] = quote

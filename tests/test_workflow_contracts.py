@@ -35,6 +35,56 @@ class WorkflowContractTests(unittest.TestCase):
     extractor = fixtures.OnlineTests.extractor
     run_fixture = fixtures.OnlineTests.run_fixture
 
+    def test_audit_event_persists_without_view_rebuild_and_failure_still_projects(self):
+        self.run_fixture()
+        runner = OnlineRunner(self.path, self.config,
+            models={'extraction': fixtures.Model(self.extraction), 'judge': fixtures.Model(self.judgment)},
+            providers={'serper': self.provider}, opener=self.opener, extractor=self.extractor)
+        layout = WorkspaceLayout(self.path)
+        views = {p: p.read_bytes() for p in layout.socm.glob('*.json')}
+        with patch.object(adapter, 'project', side_effect=AssertionError('Audit event rebuilt views')):
+            runner.event('model_response', call_id='offline', content='raw response')
+        self.assertEqual(adapter.load(self.path)['online']['events'][-1]['content'], 'raw response')
+        self.assertEqual({p: p.read_bytes() for p in views}, views)
+        runner.event('failure', failure_type='source_unavailable', error_type='SyntheticFailure')
+        self.assertTrue(any(p.read_bytes() != data for p, data in views.items()))
+        self.assertIn('source_unavailable', layout.socm.joinpath('search_state.json').read_text())
+
+    def test_export_uses_facts_without_repairing_stale_socm_views(self):
+        from export_batch import write_export
+        result, _ = self.run_fixture()
+        layout = WorkspaceLayout(self.path)
+        views = [layout.socm / 'search_state.json', layout.socm / 'coverage_map.json']
+        for view in views:
+            view.write_text('stale derived view')
+        schema_before = layout.schema.read_bytes()
+        facts_before = adapter.load(self.path)
+        batch = write_export(self.path)
+        self.assertEqual(batch['cases'], build(deepcopy(facts_before))['cases'])
+        self.assertEqual(layout.schema.read_bytes(), schema_before)
+        self.assertTrue(all(view.read_text() == 'stale derived view' for view in views))
+        facts_after = adapter.load(self.path)
+        self.assertEqual(facts_after['online']['checkpoints'][-1]['counts'], batch['counts'])
+        for facts in (facts_before, facts_after):
+            facts['online']['checkpoints'][-1].pop('counts', None)
+        self.assertEqual(facts_before, facts_after)
+        # Explicit repair restores views from facts, independent of stale view contents.
+        with adapter.locked(self.path):
+            adapter.persist(self.path, adapter.load(self.path))
+        self.assert_views(self.path, result)
+
+    def test_export_validation_failure_preserves_existing_files_and_facts(self):
+        from export_batch import write_export
+        self.run_fixture()
+        layout = WorkspaceLayout(self.path)
+        paths = [layout.adapter, layout.schema, *layout.socm.glob('*.json'),
+                 *(self.path / 'calibration').glob('*')]
+        original = {p: p.read_bytes() for p in paths if p.is_file()}
+        with patch('export_batch.render', side_effect=ValueError('Invalid export fixture')):
+            with self.assertRaisesRegex(ValueError, 'Invalid export fixture'):
+                write_export(self.path)
+        self.assertEqual({p: p.read_bytes() for p in original}, original)
+
     def test_arxiv_url_versions_share_discovery_identity_before_opening(self):
         urls = ['https://arxiv.org/abs/1309.3923v1', 'https://arxiv.org/pdf/1309.3923v2',
                 'https://export.arxiv.org/pdf/1309.3923v1.pdf']

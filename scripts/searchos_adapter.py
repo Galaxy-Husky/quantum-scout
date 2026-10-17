@@ -282,7 +282,6 @@ def prepare(path, batch=None, case_ids=None, config_dir=SKILL_ROOT / 'config'):
     write_strategy_skills(path / 'skills', config)
     shutil.copytree(SKILL_ROOT / 'assets/quantum_grounding',
                     path / 'skills/access/quantum_grounding', ignore=shutil.ignore_patterns('__pycache__'))
-    write_json(WorkspaceLayout(path).schema, schema)
     with locked(path):
         return persist(path, meta)
 
@@ -432,13 +431,9 @@ def audit_attribution(path, decision, post_hoc=False):
             cell = key(entry['request']['table_id'], candidate['case_id'], candidate['field'])
             if project(meta).coverage_map.cells[cell].status.value != 'filled':
                 raise ValueError('Candidate is not on the current coverage chain; use --post-hoc')
-            from coverage_policy import reviewed_cases
+            from coverage_policy import reviewed_cases, case_evidence
             current = reviewed_cases(meta, project(meta))
-            refs = []
-            for case in current:
-                refs += list(case['problem_definition'].values())
-                for track in case['tracks'].values():
-                    refs += list(track['criteria_evidence'].values()) + list(track['score_evidence'].values())
+            refs = (ref for case in current for ref in case_evidence(case))
             if not any(v.get('semantic_review', {}).get('report_id') == decision['report_id']
                        and v['semantic_review']['candidate_index'] == decision['candidate_index'] for v in refs):
                 raise ValueError('Candidate is not on the current coverage chain; use --post-hoc')
@@ -549,7 +544,6 @@ def main():
                 ids = meta['case_ids'] + args.case_id
                 meta['schema'] = generate(ids, meta['config']); meta['case_ids'] = ids
                 output = summary(persist(path, meta))
-                write_json(WorkspaceLayout(path).schema, meta['schema'])
             elif args.command == 'release-task':
                 if args.task_id not in meta['claimed_tasks'] or not args.reason.strip():
                     raise ValueError('Known claimed task and retry reason required')

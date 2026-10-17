@@ -1,5 +1,9 @@
 """Batch structure, evaluation and stop contract validation; no rendering."""
 
+CHECKPOINT_DELTA_KEYS = ("opened_sources", "attempted_sources", "extracted_candidate_cases",
+                         "problem_definition_complete_cases", "accepted_cases", "cache_hits")
+
+
 def criterion_is_true(value):
     return value is True or (isinstance(value, str) and value.strip().lower() == "true")
 
@@ -79,8 +83,7 @@ def validate_structure(data):
     if not isinstance(ids,list) or ids!=input_ids or len(ids)!=opened_since:
         raise ValueError("checkpoint 增量来源字段不一致")
     delta=cp.get("counts_delta")
-    delta_keys=("opened_sources","attempted_sources","extracted_candidate_cases","problem_definition_complete_cases","accepted_cases","cache_hits")
-    if not isinstance(delta,dict) or any(not isinstance(delta.get(k),int) for k in delta_keys):
+    if not isinstance(delta,dict) or any(not isinstance(delta.get(k),int) for k in CHECKPOINT_DELTA_KEYS):
         raise ValueError("checkpoint counts_delta 不完整")
     batch_size=counts.get("batch_size")
     if not isinstance(batch_size,int) or batch_size<=0: raise ValueError("batch_size 必须为正整数")

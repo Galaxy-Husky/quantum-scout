@@ -4,6 +4,14 @@
 from review_policy import supported_pair, find_decision, source_reviewable, citation_allowed
 
 
+def case_evidence(case):
+    """Iterate definitions, admission evidence and scores without filtering them."""
+    yield from case['problem_definition'].values()
+    for track in case['tracks'].values():
+        yield from track['criteria_evidence'].values()
+        yield from track['score_evidence'].values()
+
+
 def verified(item, sources):
     if not isinstance(item, dict):
         return False

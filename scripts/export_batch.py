@@ -6,9 +6,10 @@ from pathlib import Path
 
 import searchos_adapter as adapter
 from citation_backends import identity, identity_backends
-from coverage_policy import reviewed_cases
+from coverage_policy import reviewed_cases, case_evidence
 from online_policy import discovery_trace, seed_pending, attribution_metrics, current_assessments, assessment_done, table_model_calls
 from render_calibration import render
+from validate_batch import CHECKPOINT_DELTA_KEYS
 from searchos_project import save, WorkspaceLayout
 
 
@@ -50,10 +51,7 @@ def build(meta):
     sources = []
     evidence_by_source = {}
     for case in cases:
-        refs = list(case['problem_definition'].values())
-        for evaluation in case['tracks'].values():
-            refs += list(evaluation['criteria_evidence'].values()) + list(evaluation['score_evidence'].values())
-        for ref in refs:
+        for ref in case_evidence(case):
             if ref.get('source_id'):
                 evidence_by_source.setdefault(ref['source_id'], []).append(ref)
     for record in records.values():
@@ -173,12 +171,10 @@ def build(meta):
     checkpoints = online.get('checkpoints', [])
     last = checkpoints[-1] if checkpoints else {'new_source_ids': [], 'final': False, 'at': adapter.now()}
     previous_counts = checkpoints[-2].get('counts', {}) if len(checkpoints) > 1 else {}
-    delta_keys = ('opened_sources', 'attempted_sources', 'extracted_candidate_cases',
-                  'problem_definition_complete_cases', 'accepted_cases', 'cache_hits')
     cp = {'completed': status == 'completed', 'run_status': status, 'stop_reason': stop,
         'input_source_ids': last['new_source_ids'], 'new_source_ids': last['new_source_ids'],
         'opened_since_last_checkpoint': len(last['new_source_ids']), 'counts': counts,
-        'counts_delta': {k: counts[k] - previous_counts.get(k, 0) for k in delta_keys}, 'quality': quality,
+        'counts_delta': {k: counts[k] - previous_counts.get(k, 0) for k in CHECKPOINT_DELTA_KEYS}, 'quality': quality,
         'discovery_judgement': {'judgement': 'not_exhausted'},
         'search_progress': {'seed_completed': [], 'seed_pending': seed_pending(meta), 'seed_not_applicable': [],
             'seed_executed_outside_scope': [], 'adaptive_queries': query_list,
@@ -246,7 +242,9 @@ def write_export(workspace):
         if checkpoints:
             checkpoints[-1]['counts'] = batch['counts']
             save(folder / f'checkpoint-{len(checkpoints):04d}.json', batch['checkpoint'])
-            adapter.persist(workspace, meta)
+            # Only checkpoint counts changed; build/render already validated the facts.
+            # Export must not rewrite the schema or rebuild scheduling projections.
+            adapter.write_json(WorkspaceLayout(workspace).adapter, meta)
         return batch
 
 

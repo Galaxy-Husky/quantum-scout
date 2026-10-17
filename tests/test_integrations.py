@@ -127,11 +127,38 @@ class WorkflowTests(unittest.TestCase):
         async def unavailable(*args):
             raise ExtractionUnavailable('synthetic service failure')
         self.extractor = unavailable
-        result, models = self.run_fixture()
+        wire = {k: v for k, v in self.candidate.items() if k not in {'quote', 'location'}}
+        result, models = self.run_fixture(extraction={'candidates': [{**wire, 'source_quote_id': 'Q0'}], 'missing': {}})
         self.assertEqual(result['coverage']['filled'], 1)
         self.assertEqual(result['model_calls'], 3)
         self.assertEqual(len(models['judge'].calls), 2)
         self.assertTrue(any(e['kind'] == 'extraction_fallback' for e in adapter.load(self.path)['online']['events']))
+
+    def test_fallback_unknown_quote_id_does_not_reach_judge(self):
+        async def unavailable(*args):
+            raise ExtractionUnavailable('synthetic service failure')
+        self.extractor = unavailable
+        wire = {k: v for k, v in self.candidate.items() if k not in {'quote', 'location'}}
+        result, models = self.run_fixture(extraction={
+            'candidates': [{**wire, 'source_quote_id': 'unknown'}], 'missing': {}})
+        self.assertEqual(result['operational_cause'], 'contract_violation')
+        self.assertEqual(models['judge'].calls, [])
+        self.assertEqual(adapter.load(self.path)['reviews'], [])
+
+    def test_native_ids_restore_exact_source_and_isolate_literal_override(self):
+        from contextgem_extractor import segment_quote_options
+        from searchos_online import partition_candidates
+        source = 'efficiency ≈ 2 %;\ntrusted devices'
+        options = segment_quote_options([{'location': 'page:5', 'text': source}])
+        wire = {k: v for k, v in self.candidate.items() if k not in {'quote', 'location'}}
+        good = {**wire, 'source_quote_id': 'Q0'}
+        bad = {**wire, 'field': 'constraints', 'source_quote_id': 'Q0', 'quote': 'efficiency ≈ 2'}
+        result, rejected = partition_candidates({'candidates': [good, bad], 'missing': {}},
+                                               ['parties_and_roles', 'constraints'], options)
+        self.assertEqual(result.candidates[0].quote, source)
+        self.assertEqual(result.candidates[0].location, 'page:5')
+        self.assertEqual(len(result.candidates), 1)
+        self.assertEqual(rejected[0]['candidate'], bad)
 
     def test_budget_error_does_not_fall_back(self):
         async def budget(*args):
@@ -323,7 +350,11 @@ class ContextGemTests(unittest.TestCase):
         class Runner:
             config = {'call_timeout': 10}
             def __init__(self): self.calls, self.events = 0, []
-            def begin_model_call(self, *args): self.calls += 1; return 'fixture'
+            def begin_model_call(self, *args):
+                self.calls += 1
+                self.saved_input = deepcopy(args[2])
+                return 'fixture'
+            def saved_model_input(self, contract): return deepcopy(self.saved_input)
             def remaining(self): return 10
             def event(self, *args, **kwargs): self.events.append((args, kwargs))
         runner = Runner()
@@ -334,6 +365,8 @@ class ContextGemTests(unittest.TestCase):
             'reference_paragraphs': [{'reference_paragraph_id': 'P1', 'reference_sentence_ids': ['P1-S0']},
                                      {'reference_paragraph_id': 'P1', 'reference_sentence_ids': ['P1-S1']}]}]}]
         async def completion(**kwargs):
+            if runner.calls == 1:
+                runner.extraction_quote_options.clear()  # Only the persisted request remains authoritative.
             self.assertEqual(json.dumps(kwargs['messages']).count('TEST-0001.parties_and_roles'), 1)
             self.assertEqual(kwargs['extra_body'], {'enable_thinking': False})
             self.assertEqual(kwargs['temperature'], 0.0)
@@ -354,6 +387,8 @@ class ContextGemTests(unittest.TestCase):
             result = asyncio.run(extract(runner, {'target_cells': ['problem_definition/TEST-0001.parties_and_roles']},
                 [{'location': 'page:1', 'text': 'Two parties decide.'}, {'location': 'page:2', 'text': body}]))
         self.assertEqual(runner.calls, 1)
+        self.assertEqual(runner.extraction_quote_options, {})
+        runner.extraction_quote_options = deepcopy(runner.saved_input['source_quote_options'])
         self.assertEqual(result['candidates'][0]['location'], 'page:2')
         self.assertTrue(result['candidates'][0]['justification'])
         self.assertEqual([r['sentence_index'] for r in result['candidates'][0]['references']], [0, 1])

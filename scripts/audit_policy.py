@@ -113,15 +113,12 @@ def case_audit_metrics(witness, checks, config):
 
 def current_case_audit(case, config, sources, checks):
     """Derived current label; never use a historical stop snapshot as authority."""
-    from coverage_policy import coverage_witness, verified
+    from coverage_policy import coverage_witness, verified, case_evidence
     witness = coverage_witness([case], config, sources)
     if witness is None:
-        items = list(case['problem_definition'].values())
-        for track in case['tracks'].values():
-            items += list(track['criteria_evidence'].values()) + list(track['score_evidence'].values())
         witness = {'case_id': case['case_id'], 'track_id': None, 'decision_chains': {
             str(i): {**v['semantic_review'], 'source_id': v['source_id']}
-            for i, v in enumerate(items) if verified(v, sources)}}
+            for i, v in enumerate(case_evidence(case)) if verified(v, sources)}}
     result = case_audit_metrics(witness, checks, config)
     # An unfinished case with no supported candidates is unverified, not exempt.
     if result['status'] == 'not_applicable':

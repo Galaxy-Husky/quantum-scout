@@ -79,25 +79,38 @@ def document_for(segments, context):
     return Document(paragraphs=paragraphs, concepts=concepts)
 
 
+def quote_chunks(text):
+    """Deterministic bounded anchors shared by both extraction transports."""
+    start = 0
+    while start < len(text):
+        end = min(start + 50, len(text))
+        if end < len(text) and not text[end].isspace():
+            boundary = text.rfind(' ', start, end + 1)
+            if boundary > start:
+                end = boundary
+        quote = text[start:end].strip()
+        if quote:
+            yield quote
+        start = end
+        while start < len(text) and text[start].isspace():
+            start += 1
+
+
+def segment_quote_options(segments):
+    return {'Q' + str(i): item for i, item in enumerate(
+        {'quote': quote, 'location': segment['location']}
+        for segment in segments for quote in quote_chunks(segment['text']))}
+
+
 def source_quote_options(document):
     """Offer bounded source anchors before extraction; never shorten a model's quote."""
     options = {}
     for paragraph in document.paragraphs:
         for sentence in paragraph.sentences:
-            text, start, choices = sentence.raw_text, 0, {}
-            while start < len(text):
-                end = min(start + 50, len(text))
-                if end < len(text) and not text[end].isspace():
-                    boundary = text.rfind(' ', start, end + 1)
-                    if boundary > start:
-                        end = boundary
-                quote = text[start:end].strip()
-                if quote:
-                    qid = 'Q' + str(len(options))
-                    choices[qid] = options[qid] = quote
-                start = end
-                while start < len(text) and text[start].isspace():
-                    start += 1
+            choices = {}
+            for quote in quote_chunks(sentence.raw_text):
+                qid = 'Q' + str(len(options))
+                choices[qid] = options[qid] = quote
             sentence.additional_context = 'Source quote choices (ID: literal anchor): ' + json.dumps(choices, ensure_ascii=False)
     return options
 
@@ -249,7 +262,8 @@ def make_llm(runner):
 
         async def _send_non_streaming_completion(self, **kwargs):
             call_id = runner.begin_model_call('extraction', self.model,
-                                             {'messages': kwargs['messages_payload']}, 'ContextGem',
+                                             {'messages': kwargs['messages_payload'],
+                                              'source_quote_options': runner.extraction_quote_options}, 'ContextGem',
                 {'temperature': profile.temperature, 'max_tokens': min(profile.max_tokens, 4096),
                  'timeout': runner.config['call_timeout'], 'max_retries': 0})
             kwargs.update(num_retries_failed_request=0, max_retries_failed_request=0)
@@ -263,7 +277,7 @@ def make_llm(runner):
             original = response.choices[0].message.content
             normalized, rejected, retained = isolate_contract_items(
                 original, runner.extraction_fields, getattr(runner, 'extraction_table', None),
-                runner.extraction_quote_options)
+                runner.saved_model_input('ContextGem')['source_quote_options'])
             for item in rejected:
                 runner.event('contract_rejection', call_id=call_id, **getattr(runner, 'call_scope', {}), **item)
             if rejected and not retained:
@@ -314,7 +328,7 @@ async def extract(runner, context, segments):
             raise ContractViolation('All ContextGem candidates violate the contract') from exc
         raise ExtractionUnavailable(type(exc).__name__) from exc
     # Reference mapping and evidence checks are outside the fallback boundary.
-    result = candidates_from(document, segments, runner.extraction_quote_options)
+    result = candidates_from(document, segments, runner.saved_model_input('ContextGem')['source_quote_options'])
     for failure in result.pop('reference_failures'):
         runner.event('failure', failure_type=('quote_not_found' if failure['reason'].startswith('quote_not_found:')
                                              else 'contextgem_reference_rejected'), **failure,

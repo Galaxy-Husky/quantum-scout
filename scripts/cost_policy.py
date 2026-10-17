@@ -3,7 +3,7 @@ import math
 
 
 def cost_category(contract):
-    return {'ContextGem': 'extraction', 'Extraction': 'extraction',
+    return {'ContextGem': 'extraction', 'Extraction': 'extraction', 'NativeExtraction': 'extraction',
             'AttributionResult': 'attribution', 'Judgments': 'semantic',
             'CounterQuoteSpanSelections': 'semantic',
             'CounterQuoteFidelity': 'semantic',

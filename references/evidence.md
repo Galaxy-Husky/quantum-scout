@@ -1,10 +1,10 @@
 # 证据协议
 
-> 本文件唯一维护：证据资格、禁止推断补证、字段语义、部署边界前缀、案例归属与来源角色。跨职责规则通过链接引用其权威文档。
+> 本文件维护证据与评估语义；领域条件和评分参数由 `config/tracks.yaml` 定义。执行顺序见 [workflow.md](workflow.md)，输出与停止状态见 [batch-schema.md](batch-schema.md)。
 
 ## 问题定义
 
-每个候选案例必须先建立八字段问题定义：现实问题、参与方与角色、输入与输出、约束、既有方案、量子机制作用、成功条件、部署边界。production 写入 `case_problem_definitions` 表，每个字段一行；calibration 将八字段内嵌到对应案例的 `problem_definition` 对象，结构与表一致。字段级结论遵守同一引文协议；缺证时 `value_text` 为 NULL 并写 `reason`。只有八行全部有证据或显式缺失原因时 `problem_definition_complete = 1`，问题定义不完整的案例不得进入 Track 准入。
+候选案例先建立下表八字段。calibration 内嵌于案例的 `problem_definition`，production 按字段写入 `case_problem_definitions`。字段结论统一遵守本协议；完整度与缺证处理见表后。
 
 问题定义审计表模板：
 
@@ -19,21 +19,17 @@
 | success_criteria | 具体系统任务的成功条件，不把无任务联系的测量结果当作成功条件。 | …… |
 | deployment_boundary | 该场景的部署边界，必须以 `experimental: ` / `pilot: ` / `production: ` 前缀开头。研究部署可标 experimental: 或 pilot:，须有正文支持，不推断部署阶段。 | …… |
 
-关键字段为 `real_world_problem`、`parties_and_roles`、`constraints`、`quantum_mechanism_role`。
-缺证且无显式 reason 时为 `problem_definition_incomplete`，不得进入 Track；具体系统、参与者
-和任务均未建立时才为 `not_a_real_world_problem`，研究部署本身不构成拒绝理由。
-只有证据或原始 `record-gap` 的非空 reason 能计入审计完整度；单篇缺失观察不得自动补成案例 reason。
-缺失字段必须写明缺失原因；不能用空白或推断代替。`case_problem_definitions.evidence_level` 只允许 `primary` 或 `secondary`，问题定义字段不得使用 `ai_inference`，因为问题定义直接决定案例是否进入 Track。
+关键字段为 `real_world_problem`、`parties_and_roles`、`constraints`、`quantum_mechanism_role`。只有八字段都有证据或原始 `record-gap` 的非空 reason，才令 `problem_definition_complete=1`；缺证无 reason 为 `problem_definition_incomplete`，不得进入 Track。单篇缺失观察不能自动补成案例 reason。
+
+`cases.deployment_stage` 只复制有正文支持的部署边界前缀枚举。缺证时 `value_text=NULL` 并说明原因，不能用空白或推断补值。问题定义的 evidence_level 只允许 primary/secondary，不允许 ai_inference。仅当具体系统、参与者和任务均未建立时判 `not_a_real_world_problem`；研究部署本身不构成拒绝理由。
 
 ## 禁止推断补证
 
 只引用本次实际打开的正文；元数据只作线索。禁止用训练记忆或 `ai_inference`
 补问题定义、准入、评分及非空定量值。缺证保留 `insufficient_evidence` / NULL，
-按适用字段显式记录缺失原因；失败归档。定量值只允许有证据的确定性换算。
-单一独立来源标记 `single_source=1`、置信度最高 medium；C3、S2 优先要求两个独立来源。
+按适用字段显式记录缺失原因；失败归档。定量换算见[定量与字段来源](#定量与字段来源)。
+单一独立来源标记 `single_source=1`、置信度最高 medium；C3、S2 优先要求两个独立来源。置信度标签含义见[记录格式](#记录格式)。
 Bell 关联不得描述为超光速通信；领域排除以 `config/exclusions.yaml` 为准。
-
-`cases.deployment_stage` 只复制部署边界前缀对应枚举；没有正文支持不推断阶段。
 
 ## 文档与独立性
 
@@ -58,9 +54,9 @@ DOI、arXiv、规范化 URL 记录别名，版本号单独保留；同一文档�
 {"source_id":"规范化标识","search_log_id":123,"quote":"原文短引","location":"版本 + 页/节/段/表/图","unit":"ns","evidence_level":"primary","confidence":"medium","_source":"from_document"}
 ```
 
-`case_evaluations.evidence_level` 在准入为 `insufficient_evidence` 或评分为 NULL 时可为 NULL；其余有证据的评估必须为 `primary` 或 `secondary`。`unit` 对每个定量字段必填；准入和评分不要求单位。`_source` 仅用于 `case_evaluations`；`case_problem_definitions` 不需要 `_source`，其证据层级只允许 `primary` 或 `secondary`。多来源存于 `evidence_json` 数组，数组元素统一为 `{source_id, search_log_id, quote, location, evidence_level, confidence}`；顶层列保存数组第一条。quote 必须逐字对应实际原文，不把翻译当原文；理由可中文。每条短引 ≤50 字并遵守来源整体引用额度，不为满足模板重复大量引用。
+`case_evaluations.evidence_level` 在准入为 `insufficient_evidence` 或评分为 NULL 时可为 NULL；其余有证据的评估必须为 `primary` 或 `secondary`。`unit` 对每个定量字段必填；准入和评分不要求单位。`_source` 仅用于 `case_evaluations`；`case_problem_definitions` 不需要 `_source`，其证据层级见[问题定义](#问题定义)。多来源存于 `evidence_json` 数组，数组元素统一为 `{source_id, search_log_id, quote, location, evidence_level, confidence}`；顶层列保存数组第一条。quote 必须逐字对应实际原文，不把翻译当原文；理由可中文。每条短引 ≤50 字并遵守来源整体引用额度，不为满足模板重复大量引用。
 
-缺证时保留准入 `insufficient_evidence` 或评分 NULL，reason 说明缺什么；quote/location 可 NULL，不能伪造“未提及”的引用。已证实为 false 的准入也需证据。C3、S2 缺少第二独立来源时 `single_source=1`，confidence 不得 high。
+缺证对象的 quote/location 可 NULL，reason 说明缺什么，不能伪造“未提及”的引用；已证实为 false 的准入也需证据。缺证及单来源限制见[禁止推断补证](#禁止推断补证)。
 
 在线 Candidate 的 confidence 仅允许 low / medium；high 是契约违规。两档均可进入双审，
 该标签不构成 filled 的拦截门槛；填充仍须接地、有效绑定、双审、来源资格及无冲突等条件全部成立。
@@ -76,11 +72,9 @@ DOI、arXiv、规范化 URL 记录别名，版本号单独保留；同一文档�
 
 写库前逐字段验证：已打开且同 run 的日志外键、引用与位置、来源层级、单位、来源标记、范围顺序、布尔值、两来源规则。非空定量 quote 覆盖率必须 100% 才可提交；80% 是批次诊断告警线，不是允许缺证入库的门槛。DDL 只提供结构检查，不能代替这些语义验证。
 
-
 ## 来源打开层级
 
-`opened`、`opened_metadata_only` 及其事件字段、计数和证据禁用规则以 [batch-schema.md](batch-schema.md) 为唯一权威。本文件只要求证据引用服从该状态：元数据级来源不得作为问题定义、准入、评分或非空定量字段的证据。
-
+来源状态、计数及元数据级来源的证据禁用约束统一见[批次契约](batch-schema.md)；不能将来源元数据当正文。
 
 ## 写入前的源接地验证门
 
@@ -99,7 +93,6 @@ semantic_mismatch。保留缺证/null，不静默丢弃审计、不把失败视�
 全局中间件。当前原生工作流由 Agent 显式调用、持久化审计并执行后续语义复核。
 production 仍须通过原有字段/单位/两来源检查，字符串门不替代任何领域准则。
 
-
 ## 案例归属与独立语义复核
 
 引用存在仅通过字符串门。在线归属判断必须读取引文所在正文上下文，并识别目标案例的具体系统/协议。
@@ -109,8 +102,15 @@ production 仍须通过原有字段/单位/两来源检查，字符串门不替�
 case_description 应明确案例身份，不能只提供无定义的内部编号。上下文不足时保留不确定，不靠文献深度猜测。
 
 归属通过后，用独立请求核查语义支持、位置及该字段规则，特别检查否定、条件、威胁模型和组件/整体边界。
-代码执行边界统一见 [执行约束](../SKILL.md#执行约束)。
-模型拆分不是正确性保证；两次调用可以同模型，但错误可能相关。调用、缓存与状态见 [执行流程](workflow.md)。
+不同 reviewer ID 或同模型的两次调用不保证误差独立，FILLED 不等同语义正确。调用、缓存与状态见 [执行流程](workflow.md)。
+
+## 准入与评分
+
+两条Track独立判断四项准入，全部true才调度该Track评分。有证据的false可完成拒绝分支；insufficient_evidence不是false。评分不足只能令评分为null/失败，不能回改已通过的准入。
+评分枚举、归一公式、最低有效维数和纳入阈值以 workspace 的 `config/tracks.yaml` 快照为准；有效维数不足时归一分为 null，已取得的逐维分数与原始部分和保留，不算完整评分。
+至少一条Track准入通过且达到分数门槛才计纳入；另一Track保留自身结论。display_track只控制展示，不能改变评估、来源或计数。
+
+`failure_class` 的输出枚举及其与 `passed_admission` 的对应关系见[批次契约](batch-schema.md)。
 
 ## 反证与复核记录
 
@@ -120,9 +120,32 @@ review_contract=4；每项语义判断包含counter_evidence_search：segments_s
 suppressed_findings仅防同candidate_index三个flag的true→false，不比较矛盾列表/summary，不发现首次遗漏；counter_search_valid不能补足这些缺口。字段合规不证明反证搜索充分。
 归属/语义分别保存并绑定同report_id/candidate_index、case_id、value_text、location、source_sha256；review_policy.supported_pair统一校验，不另设宽松守卫。FILLED还须来源opened、无冲突、归属attributed、语义supported、location_checked=true、domain_rule_met=met。
 
+### 短引纠错
+
+ContextGem 发送前仅将句子视图的空白归一为空格，防止提示清洗粘词；保存的正文、分句边界及接地原件不变。
+
+纠错按以下顺序执行，结构与接地失败共享一次机会：
+
+| 步骤 | 约束 |
+|---|---|
+| 确定范围 | 已接地但超长的引文只取自身范围内的词边界子片段；结构合规但原位置找不到的短引，只取原有效位置的片段。 |
+| 生成选项 | 枚举1–50字符连续原文，保留原始空白并作下列词法筛选；已接地超长引文再按原文位置去掉被其他合格片段包含的片段，非原文引文的候选不作此去重。程序不作语义选择。 |
+| 选择与合并 | 模型只选 option_id，不自由生成引文或词序号；从哈希核验后的已保存请求读取选项，路径一一绑定，其他判断、反证和位置原样保留，合并后重验完整结构及接地。完整选择数组可无损包入 selections 对象，原响应保留。 |
+| 保真复核 | 另一次请求核查是否保留同一反证；按 semantic 计预算，不再格式纠错。模型仅返回 quote_id、support、reason；ID 绑定原调用、选择请求内容及具体短引/路径，程序核验已保存请求哈希并取回原文。未知、重复、缺失 ID、记录变更或非 supported 均拒绝整项判断，不要求模型抄写文字。 |
+
+词法筛选只做三件事：
+
+- 排除纯英文代词/功能词，以及不含字母的孤立数字/符号片段。
+- 正文显式百分数的比较符、数字及百分号连续保留，只覆盖 %、％、‰，不作通用单位解析。
+- 已接地超长引文的子片段保留原引文全部显式英文否定标记及次数；非原文历史短引不强制该标记。
+
+空选项、未知 ID、超长或未接地结果均拒绝，不自动截短、换 ID 或追加纠错。词法检查不验证否定作用域或语义，孤立代词缺少实质反证应判 unclear；保真复核不改变原反证 flag 或结论，也不保证模型判断无误。
+
+OpenAI 兼容传输仅对保真请求启用原生 JSON 模式并记录 response_format，不改共享设置；仍校验完整响应，说明加 JSON 的响应不截取、不重试。
+
 ## 自检、人工与成本
 
 coverage_policy按同案例同Track重算链；self_audit从原始grounding/attributions/reviews、正文哈希与原始请求重算，不接受witness快照当真值，失败保留具体missing_fields/原因。
 人工记录只能由真人提供；agent自检不计。最低样本数min(eligible,max(3,ceil(eligible*10%)))，实际从配置快照取值；覆盖<5%严重提示，仅作质量标签，不阻塞覆盖停止。零候选覆盖/精确率unknown，候选不足取全部。
-human_audit_status保留not_applicable/unverified/partial/verified/rejected，链外人工判错也令案例rejected。停止时case_audit快照不因补录改写，当前标签按最新attribution_checks重算；精确率只针对已抽样候选，不能外推总体。
-成本按call_id关联开始/响应，ContextGem内部、纠错和失败尝试均计调用；usage或USD价格无回执保留unknown，不补零、不自行估价。记录实际模型和白名单参数；不同reviewer ID不保证模型误差独立。
+human_audit_status保留not_applicable/unverified/partial/verified/rejected，链外人工判错也令案例rejected。历史快照与当前标签的字段绑定见[批次契约](batch-schema.md#案例覆盖与在线导出)；精确率只针对已抽样候选，不能外推总体。
+成本按call_id关联开始/响应，ContextGem内部、纠错和失败尝试均计调用；usage或USD价格无回执保留unknown，不补零、不自行估价。记录实际模型和白名单参数。
