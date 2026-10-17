@@ -54,7 +54,7 @@ class CandidateValue(Contract):
 
 
 class Candidate(CandidateValue):
-    quote: StrictStr = Field(min_length=1, max_length=50)
+    quote: StrictStr = Field(min_length=1)
     location: StrictStr
 
 
@@ -137,9 +137,8 @@ def validation_details(content, errors):
 class CounterEvidenceFinding(Contract):
     reason: StrictStr = ''  # Historical reviews did not carry per-finding reasons.
     location: StrictStr = Field(min_length=1)
-    quote: StrictStr = Field(min_length=1, max_length=50, description=
-        'A contiguous verbatim excerpt, preferably 10-30 characters, at most 50 characters including spaces '
-        'and punctuation. Characters, NOT words. No invented ellipses or omitted internal words.')
+    quote: StrictStr = Field(min_length=1, description=
+        'Complete selected source evidence, contiguous and verbatim. No truncation, invented ellipses or stitching.')
 
 
 class CounterEvidenceSearch(Contract):
@@ -158,7 +157,7 @@ class CounterEvidenceSearch(Contract):
         from review_policy import counter_search_valid
         if not counter_search_valid({'counter_evidence_search': self.model_dump()},
                                     {'location': self.segments_searched[0]}):
-            raise ValueError('Counter evidence needs a searched location and a 1-50 character quote per finding')
+            raise ValueError('Counter evidence needs a searched location and nonempty original evidence per finding')
         return self
 
 
@@ -176,27 +175,41 @@ class Judgments(Contract):
     judgments: list[Judgment]
 
 
+# Express nonblank text as a whole-string language for constrained decoders.
+# Search and full-match interpretations both allow complete, multiline reasons.
+NONBLANK_TEXT_PATTERN = r'^[\s\S]*\S[\s\S]*$'
+
+
 class AnchoredFinding(Contract):
     source_quote_id: StrictStr | None = Field(description=
         'Select an ID from this request catalog, or null if no anchor preserves the finding.')
-    reason: StrictStr = Field(min_length=1, pattern=r'\S', description=
+    reason: StrictStr = Field(min_length=1, pattern=NONBLANK_TEXT_PATTERN, description=
         'Identify the finding and explain its support and relevance in context; retain all material qualifiers.')
 
 
 class AnchoredCounterSearch(Contract):
     segments_searched: list[StrictStr] = Field(min_length=1)
-    negation_evidence: list[AnchoredFinding]
-    conditional_limits_evidence: list[AnchoredFinding]
-    threat_model_boundary_evidence: list[AnchoredFinding]
-    contradictions_found: list[AnchoredFinding]
+    negation_evidence: list[AnchoredFinding] = Field(description=
+        'Material source statements of absence or exclusion relevant to this candidate, '
+        'including limitations already acknowledged by the candidate. Negation is not necessarily contradiction.')
+    conditional_limits_evidence: list[AnchoredFinding] = Field(description=
+        'Material assumptions, prerequisites and experimental or deployment limits on this claim. '
+        'Include those consistent with or already stated in the candidate; invalidation is not required.')
+    threat_model_boundary_evidence: list[AnchoredFinding] = Field(description=
+        'Material security assumptions and boundaries on adversaries or guarantees, '
+        'including boundaries supporting or already stated in the candidate.')
+    contradictions_found: list[AnchoredFinding] = Field(description=
+        'Only incompatible propositions: identify the exact candidate clause and the source statement '
+        'that cannot both hold under the same scope. A compatible result, weaker support, or missing '
+        'generalization is not a contradiction; assess unsupported scope in the verdict instead.')
     summary: StrictStr = Field(min_length=1, max_length=2000)
 
 
 class AnchoredJudgment(Judgment):
     candidate_index: StrictInt = Field(ge=0, le=0)
     counter_evidence_search: AnchoredCounterSearch
-    domain_rule_reason: StrictStr = Field(min_length=1, pattern=r'\S')
-    reason: StrictStr = Field(min_length=1, pattern=r'\S')
+    domain_rule_reason: StrictStr = Field(min_length=1, pattern=NONBLANK_TEXT_PATTERN)
+    reason: StrictStr = Field(min_length=1, pattern=NONBLANK_TEXT_PATTERN)
 
 
 class AnchoredJudgments(Contract):
@@ -216,7 +229,7 @@ def anchored_output_schema(data):
     search = judgment['properties']['counter_evidence_search']['properties']
     search['segments_searched']['items']['enum'] = list(dict.fromkeys(
         segment['location'] for segment in data['context_segments']))
-    search['summary']['pattern'] = r'\S'
+    search['summary']['pattern'] = NONBLANK_TEXT_PATTERN
     finding = search['negation_evidence']['items']
     # Share the catalog enum across all four lists instead of sending it four times.
     for branch in finding['properties']['source_quote_id']['anyOf']:
@@ -952,11 +965,11 @@ class OnlineRunner:
                 'General background, shared authors, similar physics, and being cited by the root paper are not attribution. '
                 'A concrete deployment scenario counts as an explicit case even if it is a research deployment rather than a commercial one; general motivation paragraphs that state only research background remain absent. '
                 "A paper's related work paragraph can count as existing_practice if it describes a specific implementation explicitly linked to the target case rather than generic research context. "
-                'Root/source_depth=0 is not proof either. Use surrounding body context, never the short quote alone. '
+                'Root/source_depth=0 is not proof either. Use the selected evidence and surrounding body context. '
                 'Evaluate the identity of the system being described, not whether its participant names '
                 'or setup are unique to this system. Locally defined parties such as Alice and Bob may '
                 'belong to the target protocol when the surrounding passage explicitly introduces that '
-                'protocol and continues describing their operations. The short quote need not repeat '
+                'protocol and continues describing their operations. The evidence need not repeat '
                 'the full protocol name. Identify the actual contextual link; if absent or ambiguous, '
                 'retain absent or abstained rather than assuming attribution. '
                 'abstained means ambiguous or requiring inference; absent means the text addresses only generic concepts '
@@ -990,14 +1003,17 @@ class OnlineRunner:
         quote_options = {namespace + ':' + qid: anchor
                          for qid, anchor in segment_quote_options(segments).items()}
         judgment = await self.call('judge',
-            'Judge semantic support and the specific field domain rule only; case attribution was checked separately. '
-            'Do not assume semantic truth from that check. Inspect negation, conditions, threat-model limits, '
-            'counter_evidence and the exact location. Actively search ALL supplied context_segments for negation, '
-            'conditions, threat-model boundaries and contradictory passages. List the searched segment locations '
-            'in counter_evidence_search.segments_searched; explicitly report every evidence list, '
-            'contradictions_found and summary, using empty lists only when no findings are discovered. '
+            'Assess the candidate in two logical passes within this ONE response. '
+            'First inventory material source qualifications relevant to the candidate across ALL supplied '
+            'context_segments, without deciding whether they defeat the candidate. Classify them by the '
+            'finding-list definitions in the output schema. The historical key counter_evidence_search '
+            'names this qualification inventory, not a search restricted to refutations. '
+            'Record searched locations in segments_searched; return every finding list explicitly. '
+            'Use empty lists only if no relevant findings exist, not because the candidate acknowledges them. '
+            'Second evaluate EVERY candidate clause and the specific field domain rule against the '
+            'evidence and inventory. Case attribution was checked separately, not semantic truth. '
             'Keep summary within 2000 characters. For each finding return source_quote_id and reason. '
-            'source_quote_options is grouped by location, then maps ID to literal quote. '
+            'source_quote_options is grouped by location, then maps ID to a complete original evidence sentence. '
             'Select only from this request; never generate quote text or locations. '
             'Explain the finding and its relation to the candidate using the selected anchor and context. '
             'An anchor is not semantic proof: preserve material numbers, units, negation, conditions and '
@@ -1005,12 +1021,18 @@ class OnlineRunner:
             'If no supplied anchor preserves a discovered finding, return source_quote_id=null and '
             'explain why in reason; retain the finding in its list. Do not hide discoveries to fit the catalog. '
             'All finding groups including contradictions_found use this same ID-and-reason contract. '
+            'Within each group cite an evidence ID once; combine the conditions supported by that '
+            'complete sentence in its reason, without dropping any of them. '
             'Report findings before deciding the verdict. Conditions and threat-model boundaries belong '
             'in their lists even when they support the candidate or are already stated in its value. '
             'Summary and verdict reasons must not be the only record of an identified condition. '
-            'For each finding, the chosen quote itself must retain the claimed qualifier; surrounding '
-            'context cannot supply a qualifier missing from that quote. If none does, use null and explain. '
-            'Use contradictions_found only for passages that contradict the candidate claim. '
+            'For each finding, the selected full evidence must support the claimed qualifier; surrounding '
+            'context must not substitute unrelated or missing evidence. If a finding needs separate sentences, report separate supported findings, not a stitched quote. If no selected evidence supports it, use null and explain. '
+            'In each contradiction reason identify both incompatible propositions and their shared scope. '
+            'Do not label a compatible observation as contradiction merely because it does not establish '
+            'a universal criterion. Missing support requires semantic_mismatch or abstain, not invented opposition. '
+            'Before returning, reconcile summary and verdict with the lists; retain actual findings rather '
+            'than deleting them to make a supported verdict consistent. '
             'Describe search terms and findings in summary. Do not claim a full-paper search. '
             'domain_rule_met=met means the evidence meets the rule for this candidate value; a well-supported false '
             'admission may meet that rule without passing admission. Use not_met or unclear otherwise. '

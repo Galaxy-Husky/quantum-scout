@@ -337,7 +337,7 @@ class ContextGemTests(unittest.TestCase):
                     {'target_cells': ['problem_definition/TEST-0001.parties_and_roles']},
                     [{'location': 'page:1', 'text': 'Two parties decide.'}]))
 
-    def test_source_quote_choices_preserve_body_and_bound_every_anchor(self):
+    def test_source_evidence_preserves_complete_sentences_and_body(self):
         from contextgem_extractor import document_for, source_quote_options
         segments = [{'location': 'page:1', 'text': (
             'The problem of clock synchronization involves two spatially separated parties, '
@@ -346,7 +346,9 @@ class ContextGemTests(unittest.TestCase):
         document = document_for(segments, {'target_cells': ['problem_definition/TEST-0001.real_world_problem']})
         choices = source_quote_options(document)
         self.assertTrue(choices)
-        self.assertTrue(all(0 < len(q) <= 50 for q in choices.values()))
+        self.assertTrue(all(q.strip() for q in choices.values()))
+        self.assertTrue(any(len(q) > 50 for q in choices.values()))
+        self.assertEqual(len(choices), sum(len(p.sentences) for p in document.paragraphs))
         # Even text without spaces is covered; no source characters are silently discarded.
         self.assertEqual(''.join(''.join(choices.values()).split()), ''.join(segments[0]['text'].split()))
         self.assertEqual(segments, original)
@@ -363,7 +365,7 @@ class ContextGemTests(unittest.TestCase):
             get_sentence_index=lambda s: (0, 0))
         result = candidates_from(document, [{'location': 'page:1', 'text': sentence.raw_text}])
         self.assertEqual([c['field'] for c in result['candidates']], ['good'])
-        self.assertEqual(result['candidates'][0]['quote'], 'Two parties')
+        self.assertEqual(result['candidates'][0]['quote'], 'Two\n parties')
         self.assertEqual([f['field'] for f in result['reference_failures']], ['bad'])
         self.assertIn('bad', result['missing'])
 
@@ -409,7 +411,7 @@ class ContextGemTests(unittest.TestCase):
             self.assertEqual(kwargs['max_retries'], 0)
             self.assertNotIn('response_format', kwargs)
             body_prompt = next(m['content'] for m in kwargs['messages'] if m['role'] == 'user')
-            self.assertIn('Source quote choices', body_prompt)
+            self.assertIn('Source evidence ID for this complete sentence', body_prompt)
             for phrase in ('timing protocols', 'vulnerable to asymmetric', 'Hong–Ou–Mandel (HOM)'):
                 self.assertIn(phrase, body_prompt)
             for joined in ('timingprotocols', 'toasymmetric', 'Mandel(HOM)'):
@@ -525,13 +527,13 @@ class ContextContractTests(unittest.TestCase):
         item = {'value': {'value_text': 'two parties', 'quote': 'Two parties', 'confidence': 'medium',
                          'evidence_level': 'primary'}, 'justification': 'fixture', 'reference_paragraphs': []}
         bad = deepcopy(item); bad['value']['confidence'] = 'high'
-        long = deepcopy(item); long['value']['quote'] = 'x' * 51
+        empty = deepcopy(item); empty['value']['quote'] = ''
         content = json.dumps([{'concept_id': 'C0', 'extracted_items': [item]},
-                              {'concept_id': 'C1', 'extracted_items': [bad, long]}])
+                              {'concept_id': 'C1', 'extracted_items': [bad, empty]}])
         filtered, rejected, kept = isolate_contract_items(content, ['a', 'b'])
         self.assertEqual(kept, 1)
         self.assertEqual(json.loads(filtered)[0]['extracted_items'], [item])
-        self.assertEqual([r['candidate'] for r in rejected], [bad, long])
+        self.assertEqual([r['candidate'] for r in rejected], [bad, empty])
         self.assertEqual(isolate_contract_items('{bad', ['a']), ('{bad', [], 0))
 
 class BackendTests(unittest.TestCase):

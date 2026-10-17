@@ -8,7 +8,7 @@
 
 问题定义审计表模板：
 
-| 字段 | 内容 | 原文短引与位置 |
+| 字段 | 内容 | 原文证据与位置 |
 |---|---|---|
 | real_world_problem | 场景中谁面对什么问题。产业部署、研究部署、公共部门应用均可，须有具体系统、具体参与者和具体任务。仅研究动机、装置描述或理论框架不满足。 | source_id；版本/节/页/段 |
 | parties_and_roles | 具体系统中的参与方及其任务角色，不把作者或合作者名单直接当作参与方。 | …… |
@@ -51,10 +51,10 @@ DOI、arXiv、规范化 URL 记录别名，版本号单独保留；同一文档�
 每条有结论的证据对象必须包含：
 
 ```json
-{"source_id":"规范化标识","search_log_id":123,"quote":"原文短引","location":"版本 + 页/节/段/表/图","unit":"ns","evidence_level":"primary","confidence":"medium","_source":"from_document"}
+{"source_id":"规范化标识","search_log_id":123,"quote":"完整所选原文证据","location":"版本 + 页/节/段/表/图","unit":"ns","evidence_level":"primary","confidence":"medium","_source":"from_document"}
 ```
 
-`case_evaluations.evidence_level` 在准入为 `insufficient_evidence` 或评分为 NULL 时可为 NULL；其余有证据的评估必须为 `primary` 或 `secondary`。`unit` 对每个定量字段必填；准入和评分不要求单位。`_source` 仅用于 `case_evaluations`；`case_problem_definitions` 不需要 `_source`，其证据层级见[问题定义](#问题定义)。多来源存于 `evidence_json` 数组，数组元素统一为 `{source_id, search_log_id, quote, location, evidence_level, confidence}`；顶层列保存数组第一条。quote 必须逐字对应实际原文，不把翻译当原文；理由可中文。每条短引 ≤50 字并遵守来源整体引用额度，不为满足模板重复大量引用。
+`case_evaluations.evidence_level` 在准入为 `insufficient_evidence` 或评分为 NULL 时可为 NULL；其余有证据的评估必须为 `primary` 或 `secondary`。`unit` 对每个定量字段必填；准入和评分不要求单位。`_source` 仅用于 `case_evaluations`；`case_problem_definitions` 不需要 `_source`，其证据层级见[问题定义](#问题定义)。多来源存于 `evidence_json` 数组，数组元素统一为 `{source_id, search_log_id, quote, location, evidence_level, confidence}`；顶层列保存数组第一条。quote 必须逐字对应实际原文，不把翻译当原文；理由可中文。quote保存明确选中的完整原文证据，不再按50字符切断语义。机器评审与人工视图读取同一字段，不另存展示短引；来源整体引用额度仍须遵守，不为满足模板重复大量引用。
 
 缺证对象的 quote/location 可 NULL，reason 说明缺什么，不能伪造“未提及”的引用；已证实为 false 的准入也需证据。缺证及单来源限制见[禁止推断补证](#禁止推断补证)。
 
@@ -114,21 +114,25 @@ case_description 应明确案例身份，不能只提供无定义的内部编号
 
 ## 反证与复核记录
 
+发现记录先于结论：同一次请求先盘点与候选有关的原文限定，再判断候选各分句；`counter_evidence_search` 是沿用字段名，不限于推翻候选的证据。否定记录相关的缺失/排除，条件记录假设、前提与实验/部署范围，威胁边界记录安全假设与保证范围；候选已承认或得到这些限定支持，也须记录。只有同一范围下不能同时成立的“候选分句—原文命题”对进入矛盾列表；支持不足、结果不足以推广为普遍标准，由结论判缺证/不匹配，不冒充矛盾。分类定义随请求schema发送，不新增字段、调用或自动语义纠错；总结与列表一致性仍需语义验收，结构回放不能证明遵守。
+
 review_contract=4；每项语义判断包含counter_evidence_search：segments_searched、negation_found、conditional_limits_found、threat_model_boundary_found、对应三个*_evidence对象列表、contradictions_found与summary。
-每个true必须对应非空举证列表，false只能空列表；每项举证/矛盾含location及1–50字符连续原文quote，location在实际提供并声明搜索的分段内。summary为1–2000字符且非空白，说明发现及其对结论的影响；不声称搜索未提供全文。
+每个true必须对应非空举证列表，false只能空列表；每项举证/矛盾含location及非空连续原文证据quote，location在实际提供并声明搜索的分段内。summary为1–2000字符且非空白，说明发现及其对结论的影响；不声称搜索未提供全文。
 发现却无法合规举证属于counter_evidence_unsubstantiated，不能改报false或用abstain绕过；语义评审结构或接地失败不追加格式纠错，保留原响应与实际长度，以error/contract_violation停止。
 suppressed_findings仅防同candidate_index三个flag的true→false，不比较矛盾列表/summary，不发现首次遗漏；counter_search_valid不能补足这些缺口。字段合规不证明反证搜索充分。
 归属/语义分别保存并绑定同report_id/candidate_index、case_id、value_text、location、source_sha256；review_policy.supported_pair统一校验，不另设宽松守卫。FILLED还须来源opened、无冲突、归属attributed、语义supported、location_checked=true、domain_rule_met=met。
 
-### 短引锚点
+### 原文证据绑定
 
-ContextGem发送前仅将句子视图空白归一为空格，保存正文和接地原件不变。抽取及语义评审复用原文片段切分器；目录项为不超过50字符的连续原文，不修改模型已选文字。
+ContextGem发送前仅将句子视图空白归一为空格，保存正文和接地原件不变。抽取及语义评审复用保守分句规则；每项为完整连续原文句，不按字符长度截断，长句保持完整；供给范围受既有上下文预算约束。分句近似不保证语言学完美，目录无法支持发现时仍null停止，不能猜配。ContextGem仅附句子ID、不重复原句；选中后按允许的空白归一定位回原文，再接地记录来源哈希及偏移。
 
-语义评审发送前将当前候选、上下文和 source_quote_options 一同保存并记录请求哈希。 上下文在请求中仅保留一份，目录按 location → {ID: 原文短引} 分组，避免重复位置与字段名；紧凑JSON仅去除序列化空白，不改原文字符串。一次 AnchoredJudgments 响应完成候选结论、领域条件和发现判断；模型输出不再重复生成三个 *_found 标记，必须显式返回所有发现列表（无发现为空）；程序仅在锚点还原成功后据列表生成内部标记，历史含标记的响应不转换为新契约。请求输出顺序先列发现、再给候选结论；支持候选或已写入候选值的条件也须保留在对应列表，不能只写在summary/reason中。所选短引本身须保留发现理由声称的实质限定，不能由上下文补足短引缺失的限定；无合适片段仍报null并停止，不推断未报告的语义。每项发现只返回 source_quote_id（无合适片段时为null）及非空 reason，不生成或覆盖引文、位置。短ID绑定候选/上下文命名空间；程序从本次已保存请求读取目录，还原 quote/location，按原有 Judgments、接地和双审守卫检验后才能提交。
+语义评审发送前将当前候选、上下文和 source_quote_options 一同保存并记录请求哈希。 上下文在请求中仅保留一份，目录按 location → {ID: 完整原文证据} 分组，避免重复位置与字段名；紧凑JSON仅去除序列化空白，不改原文字符串。一次 AnchoredJudgments 响应完成候选结论、领域条件和发现判断；模型输出不再重复生成三个 *_found 标记，必须显式返回所有发现列表（无发现为空）；程序仅在锚点还原成功后据列表生成内部标记，历史含标记的响应不转换为新契约。请求输出顺序先列发现、再给候选结论；支持候选或已写入候选值的条件也须保留在对应列表，不能只写在summary/reason中。所选完整证据须支持发现理由声称的实质限定；上下文可帮助解释身份或指代，不能代替缺失的实质证据；无合适片段仍报null并停止，不推断未报告的语义。每项发现只返回 source_quote_id（无合适片段时为null）及非空 reason，不生成或覆盖引文、位置。证据ID绑定候选/上下文命名空间；程序从本次已保存请求读取目录，还原 quote/location，按原有 Judgments、接地和双审守卫检验后才能提交。
 
-未知ID、同组重复ID、位置错配、请求篡改、发现标记与列表不一致均拒绝整项，原响应保留。null以 quote_unlocatable 原因停止，仍沿用 error/contract_violation，不另加运行状态；已发现条件不得因无合适短引而改报false。不同发现类别可引用同一片段。语义评审失败不追加格式纠错、短引重选或独立保真调用；其他模型契约的一次既有格式纠错上限不变。
+理由与总结的非空白schema使用整串表达，避免搜索匹配与整串匹配对裸 `\S` 的解释差异；这只约束非空白，不证明理由充分或语义正确。
 
-片段存在不等于支持成立，数值/单位与条件完整性也不能由字符匹配保证。模型须在原始评审中核对所选短引及上下文是否表达具体发现、完整限定和强度；目录不能表达时显式保留未完成。威胁边界、条件与否定不要求反驳候选，只有 contradictions_found 声明矛盾。实现准入须逐项核对原文支持，隔离假设本身不能证明或否定可实现性，硬件描述不得冒充“明确无需容错”的原文；缺证保留不确定，不推成false。
+未知ID、同组重复ID、位置错配、请求篡改、发现标记与列表不一致均拒绝整项，原响应保留。null以 quote_unlocatable 原因停止，仍沿用 error/contract_violation，不另加运行状态；已发现条件不得因无合适短引而改报false。不同发现类别可引用同一片段。语义评审失败不追加格式纠错、证据重选或独立保真调用；其他模型契约的一次既有格式纠错上限不变。
+
+片段存在不等于支持成立，数值/单位与条件完整性也不能由字符匹配保证。模型须在原始评审中核对所选完整证据及上下文是否表达具体发现、完整限定和强度；目录不能表达时显式保留未完成。威胁边界、条件与否定不要求反驳候选，只有 contradictions_found 声明矛盾。实现准入须逐项核对原文支持，隔离假设本身不能证明或否定可实现性，硬件描述不得冒充“明确无需容错”的原文；缺证保留不确定，不推成false。
 
 支持的OpenAI兼容传输对该次语义评审启用JSON模式并记录response_format；仍校验整个响应，不截取正文中的JSON。还原后的发现保留reason，历史无该字段的审计仍可读取；新执行基线必须使用全新workspace，不迁移历史判定。
 
@@ -138,3 +142,5 @@ coverage_policy按同案例同Track重算链；self_audit从原始grounding/attr
 人工记录只能由真人提供；agent自检不计。最低样本数min(eligible,max(3,ceil(eligible*10%)))，实际从配置快照取值；覆盖<5%严重提示，仅作质量标签，不阻塞覆盖停止。零候选覆盖/精确率unknown，候选不足取全部。
 human_audit_status保留not_applicable/unverified/partial/verified/rejected，链外人工判错也令案例rejected。历史快照与当前标签的字段绑定见[批次契约](batch-schema.md#案例覆盖与在线导出)；精确率只针对已抽样候选，不能外推总体。
 成本按call_id关联开始/响应，ContextGem内部、纠错和失败尝试均计调用；usage或USD价格无回执保留unknown，不补零、不自行估价。记录实际模型和白名单参数。
+
+人工导出逐项展示结论、来源/版本/位置、原文偏移及同一完整证据，并显示条件/边界的证据与理由；长文仅界面折叠，展开不丢字。不新建短引字段或证据账本。历史workspace不重写判断；执行基线改变后使用新workspace。

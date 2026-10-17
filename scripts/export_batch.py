@@ -8,7 +8,7 @@ import searchos_adapter as adapter
 from citation_backends import identity, identity_backends
 from coverage_policy import reviewed_cases, case_evidence
 from online_policy import discovery_trace, seed_pending, attribution_metrics, current_assessments, assessment_done, table_model_calls
-from render_calibration import render
+from render_calibration import render, render_case_files
 from validate_batch import CHECKPOINT_DELTA_KEYS
 from searchos_project import save, WorkspaceLayout
 
@@ -238,6 +238,7 @@ def write_export(workspace):
         folder = workspace / 'calibration'
         save(folder / 'batch.json', batch)
         save(folder / 'comparison.md', comparison)
+        render_case_files(batch, folder / 'cases')
         checkpoints = meta['online'].get('checkpoints', [])
         if checkpoints:
             checkpoints[-1]['counts'] = batch['counts']

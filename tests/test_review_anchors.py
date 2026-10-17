@@ -117,6 +117,9 @@ class AnchorReviewTests(unittest.TestCase):
         self.assert_no_extra_call(result, meta)
         self.assertEqual(result['coverage']['filled'], 0)
         self.assertEqual(meta['reviews'][0]['verdict'], 'semantic_mismatch')
+        case_view = (self.path / 'calibration/cases/TEST-0001.md').read_text()
+        self.assertIn('未接受候选/parties_and_roles', case_view)
+        self.assertIn('semantic_mismatch', case_view)
 
     def test_changed_saved_catalog_stops_even_when_ids_are_valid(self):
         def tamper():
@@ -169,7 +172,46 @@ class AnchorReviewTests(unittest.TestCase):
         result, meta, _ = self.run_output(self.output())
         self.assert_no_extra_call(result, meta)
         self.assertEqual(meta['reviews'][0]['counter_evidence_search']['conditional_limits_evidence'][0]['quote'],
-                         'Two parties decide.\nOnly within 10 ns.')
+                         'Two parties decide.')
+
+    def test_full_evidence_survives_grounding_review_export_and_human_view(self):
+        from render_calibration import render, render_case_files
+        from review_policy import source_reviewable
+        body = ('The parties can isolate their systems, privately choose random\n'
+                'classical inputs, and process classical information on trusted computers; '
+                'the string <script> is source text, not markup.')
+        self.candidate['quote'] = body
+        original = self.opener
+        async def opener(*args):
+            source = await original(*args)
+            source['segments'][0]['text'] = body
+            source['text'] = '[paragraph:1]\n' + body
+            return source
+        self.opener = opener
+        result, meta, _ = self.run_output(self.output())
+        self.assert_no_extra_call(result, meta)
+        self.assertEqual(result['coverage']['filled'], 1)
+        review = meta['reviews'][0]
+        finding = review['counter_evidence_search']['conditional_limits_evidence'][0]
+        self.assertEqual(finding['quote'], body)
+        report = meta['grounding'][review['report_id']]
+        evidence = report['report']['validated_candidates'][0]
+        self.assertEqual(evidence['quote'], body)
+        self.assertEqual(evidence['grounding']['matched_text'], body)
+        start, end = evidence['grounding']['span']
+        self.assertEqual(report['request']['source']['text'][start:end], body)
+        changed = deepcopy(review)
+        changed['counter_evidence_search']['conditional_limits_evidence'][0]['quote'] = body.replace('privately', 'publicly')
+        self.assertFalse(source_reviewable(report['request']['source'], changed))
+        batch = json.loads((self.path / 'calibration/batch.json').read_text())
+        self.assertEqual(batch['cases'][0]['problem_definition']['parties_and_roles']['quote'], body)
+        view = render(batch)
+        from html import escape
+        self.assertIn('<pre>' + escape(body) + '</pre>', view)
+        self.assertNotIn('<script>', view)
+        case_view = self.path / 'calibration/cases/TEST-0001.md'
+        self.assertTrue(case_view.exists())
+        self.assertIn('<pre>' + escape(body) + '</pre>', case_view.read_text())
 
     def test_schema_rejection_stops_without_json_mode_fallback(self):
         from langchain_openai import ChatOpenAI
@@ -233,6 +275,37 @@ class AnchorReviewTests(unittest.TestCase):
         qid = next(qid for choices in valid['source_quote_options'].values() for qid in choices)
         valid = AnchoredJudgments.model_validate(self.output(qid)).model_dump()
         jsonschema.validate(valid, schema)
+        # Exercise the actual SDK wire schema under both pattern interpretations.
+        # A search-only nonblank regex can become a one-character decoder language.
+        import re
+        paths = [
+            ('reason',), ('domain_rule_reason',),
+            ('counter_evidence_search', 'summary'),
+            ('counter_evidence_search', 'conditional_limits_evidence', 0, 'reason'),
+        ]
+        props = schema['properties']['judgments']['items']['properties']
+        patterns = [props['reason']['pattern'], props['domain_rule_reason']['pattern'],
+                    props['counter_evidence_search']['properties']['summary']['pattern'],
+                    schema['$defs']['AnchoredFinding']['properties']['reason']['pattern']]
+        for text in ('A complete reason with a qualifier.', ' 保留否定：并非无条件。\n第二行 ',
+                     'Leading\ntext\n', 'T', '', ' \t\r\n'):
+            expected = bool(text.strip())
+            for path, pattern in zip(paths, patterns):
+                with self.subTest(text=text, path=path):
+                    self.assertEqual(bool(re.search(pattern, text)), expected)
+                    self.assertEqual(bool(re.fullmatch(pattern, text)), expected)
+                    payload = deepcopy(valid)
+                    target = payload['judgments'][0]
+                    for key in path[:-1]:
+                        target = target[key]
+                    target[path[-1]] = text
+                    if expected:
+                        jsonschema.validate(payload, schema)
+                        AnchoredJudgments.model_validate(payload)
+                    else:
+                        with self.assertRaises(jsonschema.ValidationError):
+                            jsonschema.validate(payload, schema)
+        # Single characters remain structurally valid, not semantically sufficient.
         wrong_location = deepcopy(valid)
         wrong_location['judgments'][0]['counter_evidence_search']['segments_searched'] = ['],page:1']
         with self.assertRaises(jsonschema.ValidationError):

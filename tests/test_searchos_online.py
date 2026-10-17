@@ -328,7 +328,7 @@ class OnlineTests(unittest.TestCase):
         self.assertEqual(result['coverage']['filled'], 0)
 
     def test_mixed_contract_rejections_preserve_valid_candidate_and_judges(self):
-        invalid = {**self.candidate, 'field': 'constraints', 'quote': 'x' * 51}
+        invalid = {**self.candidate, 'field': 'constraints', 'quote': ''}
         high = {**self.candidate, 'field': 'real_world_problem', 'confidence': 'high'}
         result, models = self.run_fixture(extraction={'candidates': [invalid, high, self.candidate], 'missing': {}})
         self.assertEqual(result['coverage']['filled'], 1)

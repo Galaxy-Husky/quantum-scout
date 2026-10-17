@@ -45,7 +45,7 @@ def counter_search_valid(review, candidate):
         return False
     def finding_valid(finding):
         return (isinstance(finding, dict) and finding.get('location') in locations
-                and nonempty(finding.get('quote')) and len(finding['quote']) <= 50)
+                and nonempty(finding.get('quote')))
     for key in flags:
         findings = search.get(key + '_evidence', [])
         if (not isinstance(findings, list) or bool(findings) != search[key + '_found']
@@ -72,7 +72,7 @@ def source_reviewable(source, review):
     findings = findings + [f for key in ('negation', 'conditional_limits', 'threat_model_boundary')
                            for f in search.get(key + '_evidence', [])]
     return all(isinstance(f, dict) and f.get('location') in segments
-               and nonempty(f.get('quote')) and len(f['quote']) <= 50
+               and nonempty(f.get('quote'))
                and grounding_gate().locate(segments[f['location']], f['quote']) is not None
                for f in findings)
 

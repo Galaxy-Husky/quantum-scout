@@ -12,6 +12,61 @@ from validate_batch import (
     evidence_breakdown_warnings,
 )
 
+def render_case_evidence(case, sources, failures=()):
+    """Human view of the same selected evidence; no separate preview fact."""
+    from html import escape
+    rows = list(case.get('problem_definition', {}).items())
+    for track, evaluation in case.get('tracks', {}).items():
+        for collection in ('criteria_evidence', 'score_evidence'):
+            rows.extend((track + '/' + field, evidence)
+                        for field, evidence in evaluation.get(collection, {}).items())
+    for failure in failures:
+        if failure.get('case_id') == case.get('case_id') and failure.get('failure_type') == 'semantic_mismatch':
+            rows.append(('未接受候选/' + failure.get('field', ''),
+                         {**failure['candidate'], 'semantic_review': failure.get('review', {})}))
+    lines = []
+    for field, evidence in rows:
+        lines += ['', '### ' + escape(field), '', escape(str(evidence.get('value_text') or '缺证／尚未完成'))]
+        if not evidence.get('quote'):
+            continue
+        source = sources.get(evidence.get('source_id'), {})
+        url = source.get('url', '')
+        label = escape(str(evidence.get('source_id', '')))
+        if isinstance(url, str) and url.startswith(('https://', 'http://')):
+            label = '<a href="' + escape(url, quote=True) + '">' + label + '</a>'
+        lines += ['', '来源：' + label + '；位置：' + escape(str(evidence.get('location', ''))),
+                  '版本：' + escape(str(source.get('document_version', '未记录')))]
+        receipt = evidence.get('grounding') or {}
+        if receipt:
+            lines += ['原文偏移：' + escape(str(receipt.get('span'))) +
+                      '；SHA256：' + escape(str(receipt.get('source_sha256')))]
+        def passage(text, title):
+            # Escape body HTML rather than treating untrusted document text as markup.
+            opened = ' open' if len(text) <= 600 else ''
+            return ['', '<details' + opened + '><summary>' + escape(title) + '</summary>', '',
+                    '<pre>' + escape(text) + '</pre>', '', '</details>', '']
+        lines += passage(evidence['quote'], '所选完整原文证据（与机器评审一致）')
+        # Explicit ContextGem references are also supplied to the machine review.
+        seen = {' '.join(evidence['quote'].split())}
+        for ref in evidence.get('references', []):
+            text = ref.get('text', '')
+            if text and ' '.join(text.split()) not in seen:
+                seen.add(' '.join(text.split()))
+                lines += ['关联位置：' + escape(str(ref.get('location', '')))]
+                lines += passage(text, '模型明确引用的关联原文')
+        review = evidence.get('semantic_review') or {}
+        lines += ['语义结论：' + escape(str(review.get('verdict', '未记录'))),
+                  '评审理由：' + escape(str(review.get('reason', '未记录')))]
+        search = review.get('counter_evidence_search') or {}
+        for group, title in (('negation_evidence', '否定'), ('conditional_limits_evidence', '条件'),
+                             ('threat_model_boundary_evidence', '威胁边界'), ('contradictions_found', '矛盾')):
+            for finding in search.get(group, []):
+                lines += ['', title + '：' + escape(str(finding.get('reason', '未记录'))),
+                          '位置：' + escape(str(finding.get('location', '')))]
+                lines += passage(finding.get('quote', ''), title + '的完整原文证据')
+    return lines
+
+
 def pct(value):
     return "N/A" if value is None else f"{value:.1%}"
 
@@ -201,7 +256,7 @@ def render(data, legacy_audit=False):
     if not failures: lines.append("| — | — | 无 |")
     lines += ["","## 三、来源使用情况","",f"- 有实质证据的来源：{len(evidence_sources)} / {len(data['sources'])}",f"- 仅标题/元数据级来源：{sum(1 for s in data['sources'] if s.get('status')=='opened_metadata_only')}","","| Source | 状态 | 支持案例 | 证据摘录 |","|---|---|---|---|"]
     for source in evidence_sources:
-        evidence_text = "；".join(e.get("quote", "") for e in source.get("evidence", []))
+        evidence_text = str(len(source.get("evidence", []))) + "项完整证据（见逐项原文证据）"
         if not evidence_text:
             evidence_text = "字段级/准入证据引用"
         lines.append(f"| `{source['source_id']}` | `{source.get('status')}` | {', '.join(source.get('supports_cases',[])) or '—'} | {evidence_text} |")
@@ -225,7 +280,7 @@ def render(data, legacy_audit=False):
         trail_status = "完整"
     else:
         trail_status = "部分为空（事件未关联）"
-    case_files = [f"`cases/{case['case_id']}.md`" for case in good]
+    case_files = [f"`cases/{case['case_id']}.md`" for case in data.get("cases", [])]
     checkpoint_events = [event for event in data.get("events", []) if event.get("kind") == "checkpoint"]
     batch_size = counts.get("batch_size", "N/A")
     lines += ["","## 五、质量指标","",f"- Primary evidence ratio：{pct(quality.get('primary_evidence_ratio'))}",f"- Insufficient-evidence admission ratio：{pct(quality.get('insufficient_evidence_admission_ratio'))}",f"- Quantitative quote coverage：{pct(quality.get('quantitative_quote_coverage'))}","- 警告："+("；".join(format_warning(w) for w in quality.get('warnings',[])) or "无"),"","## 六、审计提示","",f"- 发现轨迹完整性：{trail_status}",f"- 事件记录：{len(data.get('events',[]))}",f"- Checkpoint 次数：{len(checkpoint_events)}",f"- Checkpoint 间隔（成功打开来源数）：{batch_size}",f"- 发现池与打开来源相等：{'是（run 结束时可正常；请查看中间 checkpoint 的 sources_unattempted）' if pool==counts.get('opened_sources') else '否'}","","## 七、附件","",f"- 批次 JSON：`{data['run_id']}/calibration/batch.json`",f"- Checkpoint：`{data['run_id']}/checkpoints/{data['batch_id']}.json`",f"- 单案例草稿：{('、'.join(case_files)) if case_files else '无'}"]
@@ -243,13 +298,17 @@ def render(data, legacy_audit=False):
                 return str(row[key]) if known == row['calls'] else f"{row[key]} (partial)" if known else 'unknown'
             lines += [f"| {category} | {row['calls']} | {row['responses']} | {tokens('input_tokens')} | {tokens('output_tokens')} | {row['unknown_usage_calls']} | {usd} |"]
         lines += ['', '缺失 usage/价格不按零成本处理；USD 仅采信调用回执，不推测网关计价。']
+    lines += ['', '## 八、逐项原文证据', '', '原生评审记录不等于人工确认；缺证及未完成状态保持不变。']
+    source_index = {source['source_id']: source for source in data.get('sources', [])}
+    for case in data.get('cases', []):
+        lines += ['', '## ' + case['case_id']] + render_case_evidence(case, source_index, data.get("grounding_failures", []))
     return "\n".join(lines)+"\n"
 
 def render_case_files(data, output_dir):
     output_dir = Path(output_dir)
     source_index = {s.get("source_id"): s for s in data.get("sources", [])}
     output_dir.mkdir(parents=True, exist_ok=True)
-    for case in accepted_cases(data):
+    for case in data.get("cases", []):
         lines = [
             f"# {case['case_id']} [CALIBRATION DRAFT]",
             "",
@@ -271,7 +330,7 @@ def render_case_files(data, output_dir):
         for name, field in case.get("problem_definition", {}).items():
             value = field.get("value_text") or ("缺失：" + ((field.get("reason") if field.get('reason_source') == 'explicit_gap' else None) or "未记录显式缺失原因"))
             evidence = (
-                f"{field.get('source_id', '')}；{field.get('location', '')}；“{field.get('quote', '')}”"
+                f"{field.get('source_id', '')}；{field.get('location', '')}（见下方完整证据）"
                 if field.get("quote") else "—"
             )
             lines.append(f"| `{name}` | {value} | {evidence} |")
@@ -306,11 +365,12 @@ def render_case_files(data, output_dir):
             role = classify_source_role(case, source_id)
             lines.append(f"- **{role}**：`{source_id}`")
             lines += [
-                f"  - “{evidence.get('quote', '')}”（{evidence.get('location', '')}）"
+                f"  - 位置：{evidence.get('location', '')}（见逐项完整证据）"
                 for evidence in source.get("evidence", [])
             ]
         if not case.get("source_ids"):
             lines.append("- 未关联来源")
+        lines += ['', '## 逐项完整证据', ''] + render_case_evidence(case, source_index, data.get("grounding_failures", []))
         trail = discovery_trail(case)
         lines += [
             "",
