@@ -162,6 +162,7 @@ class WorkflowContractTests(unittest.TestCase):
         from searchos_online import CounterEvidenceSearch
         from pydantic import ValidationError
         search = deepcopy(self.judgment['judgments'][0]['counter_evidence_search'])
+        search.update(negation_found=False, conditional_limits_found=False, threat_model_boundary_found=False)
         for change in ({'segments_searched': []}, {'summary': ''}, {'summary': 'x' * 2001},
                        {'negation_found': 'false'}, {'contradictions_found': False}):
             with self.subTest(change=change), self.assertRaises(ValidationError):

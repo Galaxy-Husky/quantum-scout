@@ -44,7 +44,6 @@ class AnchorReviewTests(unittest.TestCase):
         result = deepcopy(self.judgment)
         result['judgments'][0]['verdict'] = verdict
         result['judgments'][0]['counter_evidence_search'].update(
-            conditional_limits_found=True,
             conditional_limits_evidence=[{'source_quote_id': qid,
                 'reason': 'Synthetic finding assessed in context; not real research.'}])
         return result
@@ -69,6 +68,8 @@ class AnchorReviewTests(unittest.TestCase):
         self.assert_no_extra_call(result, meta)
         self.assertEqual(result['coverage']['filled'], 1)
         review = meta['reviews'][0]
+        self.assertTrue(review['counter_evidence_search']['conditional_limits_found'])
+        self.assertFalse(review['counter_evidence_search']['negation_found'])
         finding = review['counter_evidence_search']['conditional_limits_evidence'][0]
         location, choices = next(iter(judge.review_input['source_quote_options'].items()))
         anchor = {'location': location, 'quote': next(iter(choices.values()))}
@@ -87,7 +88,7 @@ class AnchorReviewTests(unittest.TestCase):
         self.assertEqual(meta['reviews'], [])
         responses = [e['content'] for e in meta['online']['events'] if e['kind'] == 'model_response']
         self.assertIn('invented-id', responses[-1])
-        self.assertTrue(json.loads(responses[-1])['judgments'][0]['counter_evidence_search']['conditional_limits_found'])
+        self.assertTrue(json.loads(responses[-1])['judgments'][0]['counter_evidence_search']['conditional_limits_evidence'])
 
     def test_unlocatable_discovery_is_not_silently_dropped(self):
         result, meta, _ = self.run_output(self.output(None))
@@ -132,7 +133,8 @@ class AnchorReviewTests(unittest.TestCase):
 
     def test_missing_findings_cannot_satisfy_a_true_flag(self):
         output = self.output()
-        output['judgments'][0]['counter_evidence_search']['conditional_limits_evidence'] = []
+        output['judgments'][0]['counter_evidence_search'].update(
+            conditional_limits_found=True, conditional_limits_evidence=[])
         result, meta, _ = self.run_output(output)
         self.assert_no_extra_call(result, meta)
         self.assertEqual(meta['reviews'], [])
@@ -143,6 +145,18 @@ class AnchorReviewTests(unittest.TestCase):
         result, meta, _ = self.run_output(self.output(), alter)
         self.assert_no_extra_call(result, meta)
         self.assertEqual(meta['reviews'], [])
+
+    def test_known_location_cannot_replace_candidate_location(self):
+        from searchos_online import AnchoredJudgments, ContractViolation, resolve_judgment_anchors
+        output = self.output('q1')
+        search = output['judgments'][0]['counter_evidence_search']
+        search['segments_searched'] = ['page:2']
+        saved = {'candidate': {'location': 'page:1'},
+                 'context_segments': [{'location': 'page:1', 'text': 'Claim.'},
+                                      {'location': 'page:2', 'text': 'Only in theory.'}],
+                 'source_quote_options': {'page:2': {'q1': 'Only in theory.'}}}
+        with self.assertRaisesRegex(ContractViolation, 'omitted the candidate'):
+            resolve_judgment_anchors(AnchoredJudgments.model_validate(output), saved)
 
     def test_whitespace_is_restored_from_saved_source(self):
         original = self.opener
@@ -215,11 +229,32 @@ class AnchorReviewTests(unittest.TestCase):
         self.assertNotIn('\"properties\"', requests[-1]['messages'][0]['content'])
         from searchos_online import AnchoredJudgments
         # Every finding list is explicit in strict mode; no implicit empty evidence.
-        valid = AnchoredJudgments.model_validate(self.output()).model_dump()
+        valid = json.loads(requests[-1]['messages'][1]['content'])
+        qid = next(qid for choices in valid['source_quote_options'].values() for qid in choices)
+        valid = AnchoredJudgments.model_validate(self.output(qid)).model_dump()
         jsonschema.validate(valid, schema)
-        del valid['judgments'][0]['reason']
+        wrong_location = deepcopy(valid)
+        wrong_location['judgments'][0]['counter_evidence_search']['segments_searched'] = ['],page:1']
         with self.assertRaises(jsonschema.ValidationError):
-            jsonschema.validate(valid, schema)
+            jsonschema.validate(wrong_location, schema)
+        for mutation in ('unknown_id', 'wrong_candidate', 'blank_reason', 'missing_list'):
+            bad = deepcopy(valid)
+            item = bad['judgments'][0]
+            search = item['counter_evidence_search']
+            if mutation == 'unknown_id':
+                search['conditional_limits_evidence'][0]['source_quote_id'] = 'other-request:Q1'
+            elif mutation == 'wrong_candidate':
+                item['candidate_index'] = 1
+            elif mutation == 'blank_reason':
+                search['conditional_limits_evidence'][0]['reason'] = '  '
+            else:
+                del search['negation_evidence']
+            with self.subTest(mutation=mutation), self.assertRaises(jsonschema.ValidationError):
+                jsonschema.validate(bad, schema)
+        # An unlocatable discovery is expressible on the wire, but fails local commitment.
+        unlocatable = deepcopy(valid)
+        unlocatable['judgments'][0]['counter_evidence_search']['conditional_limits_evidence'][0]['source_quote_id'] = None
+        jsonschema.validate(unlocatable, schema)
         self.assertIn('source_quote_options', requests[-1]['messages'][1]['content'])
 
 

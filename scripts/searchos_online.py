@@ -179,29 +179,54 @@ class Judgments(Contract):
 class AnchoredFinding(Contract):
     source_quote_id: StrictStr | None = Field(description=
         'Select an ID from this request catalog, or null if no anchor preserves the finding.')
-    reason: StrictStr = Field(min_length=1, description=
+    reason: StrictStr = Field(min_length=1, pattern=r'\S', description=
         'Identify the finding and explain its support and relevance in context; retain all material qualifiers.')
 
 
-class AnchoredCounterSearch(CounterEvidenceSearch):
-    negation_evidence: list[AnchoredFinding] = Field(default_factory=list)
-    conditional_limits_evidence: list[AnchoredFinding] = Field(default_factory=list)
-    threat_model_boundary_evidence: list[AnchoredFinding] = Field(default_factory=list)
-    contradictions_found: list[AnchoredFinding] = Field(default_factory=list)
-
-    @model_validator(mode='after')
-    def validate_findings(self):
-        # Validate flag/list/location consistency with the canonical schema after
-        # resolving the saved anchors. Do not treat an unresolved finding as absent.
-        return self
+class AnchoredCounterSearch(Contract):
+    segments_searched: list[StrictStr] = Field(min_length=1)
+    negation_evidence: list[AnchoredFinding]
+    conditional_limits_evidence: list[AnchoredFinding]
+    threat_model_boundary_evidence: list[AnchoredFinding]
+    contradictions_found: list[AnchoredFinding]
+    summary: StrictStr = Field(min_length=1, max_length=2000)
 
 
 class AnchoredJudgment(Judgment):
+    candidate_index: StrictInt = Field(ge=0, le=0)
     counter_evidence_search: AnchoredCounterSearch
+    domain_rule_reason: StrictStr = Field(min_length=1, pattern=r'\S')
+    reason: StrictStr = Field(min_length=1, pattern=r'\S')
 
 
 class AnchoredJudgments(Contract):
     judgments: list[AnchoredJudgment] = Field(min_length=1, max_length=1)
+
+
+def anchored_output_schema(data):
+    """Bind wire choices to the request; keep local guards authoritative."""
+    from langchain_core.utils.function_calling import convert_to_openai_function
+    schema = convert_to_openai_function(AnchoredJudgments, strict=True)['parameters']
+    judgment = schema['properties']['judgments']['items']
+    props = judgment['properties']
+    # Findings precede the conclusion in the requested output, without an extra call.
+    judgment['properties'] = {'candidate_index': props.pop('candidate_index'),
+                              'counter_evidence_search': props.pop('counter_evidence_search'), **props}
+    judgment['required'] = list(judgment['properties'])
+    search = judgment['properties']['counter_evidence_search']['properties']
+    search['segments_searched']['items']['enum'] = list(dict.fromkeys(
+        segment['location'] for segment in data['context_segments']))
+    search['summary']['pattern'] = r'\S'
+    finding = search['negation_evidence']['items']
+    # Share the catalog enum across all four lists instead of sending it four times.
+    for branch in finding['properties']['source_quote_id']['anyOf']:
+        if branch.get('type') == 'string':
+            branch['enum'] = [qid for choices in data['source_quote_options'].values() for qid in choices]
+    schema['$defs'] = {'AnchoredFinding': finding}
+    for name in ('negation_evidence', 'conditional_limits_evidence',
+                 'threat_model_boundary_evidence', 'contradictions_found'):
+        search[name]['items'] = {'$ref': '#/$defs/AnchoredFinding'}
+    return schema
 
 
 def compact_review_input(data):
@@ -233,6 +258,8 @@ def resolve_judgment_anchors(parsed, saved):
         search = judgment['counter_evidence_search']
         if not set(search['segments_searched']) <= locations:
             raise ContractViolation('Review searched an unknown source location')
+        if saved['candidate']['location'] not in search['segments_searched']:
+            raise ContractViolation('Review omitted the candidate source location')
         for group in ('negation_evidence', 'conditional_limits_evidence',
                       'threat_model_boundary_evidence', 'contradictions_found'):
             seen = set()
@@ -244,6 +271,8 @@ def resolve_judgment_anchors(parsed, saved):
                     raise ContractViolation('Unknown or duplicate source_quote_id in finding group')
                 seen.add(qid)
                 finding.update(catalog[qid])
+        for kind in ('negation', 'conditional_limits', 'threat_model_boundary'):
+            search[kind + '_found'] = bool(search[kind + '_evidence'])
         if counter_quote_failures(segments, search):
             raise ContractViolation('Saved finding anchor is not grounded at its location')
     return Judgments.model_validate(payload)
@@ -576,13 +605,13 @@ class OnlineRunner:
         invoke_options = {}
         strict_output = (contract is AnchoredJudgments and
                          self.config.get('semantic_output_format', 'json_object') == 'json_schema')
+        output_schema = (anchored_output_schema(data) if contract is AnchoredJudgments
+                         else contract.model_json_schema())
         if strict_output:
             if getattr(model, '_llm_type', None) != 'openai-chat':
                 raise ValueError('json_schema semantic output requires an OpenAI-compatible transport')
-            from langchain_core.utils.function_calling import convert_to_openai_function
-            schema = convert_to_openai_function(contract, strict=True)['parameters']
             invoke_options['response_format'] = {'type': 'json_schema', 'json_schema': {
-                'name': contract.__name__, 'strict': True, 'schema': schema}}
+                'name': contract.__name__, 'strict': True, 'schema': output_schema}}
         elif contract is AnchoredJudgments and getattr(model, '_llm_type', None) == 'openai-chat':
             invoke_options['response_format'] = {'type': 'json_object'}
         call_id = self.begin_model_call(role,
@@ -594,7 +623,7 @@ class OnlineRunner:
                   'Never invent quotations, infer absent proof, or use search snippets as paper evidence. ' +
                   ('Return ONLY a JSON object conforming to the response_format schema. '
                    if strict_output else 'Return ONLY a JSON object conforming to this schema: ' +
-                   json.dumps(contract.model_json_schema(), ensure_ascii=False, separators=(',', ':'))) + '\n' + instruction)
+                   json.dumps(output_schema, ensure_ascii=False, separators=(',', ':'))) + '\n' + instruction)
         response = await asyncio.wait_for(model.ainvoke([
             ('system', system), ('human', json.dumps(data, ensure_ascii=False,
                 separators=(',', ':')))], **invoke_options), self.remaining())
@@ -965,8 +994,8 @@ class OnlineRunner:
             'Do not assume semantic truth from that check. Inspect negation, conditions, threat-model limits, '
             'counter_evidence and the exact location. Actively search ALL supplied context_segments for negation, '
             'conditions, threat-model boundaries and contradictory passages. List the searched segment locations '
-            'in counter_evidence_search.segments_searched; explicitly report negation_found, conditional_limits_found, '
-            'threat_model_boundary_found, contradictions_found and summary, even when none are found. '
+            'in counter_evidence_search.segments_searched; explicitly report every evidence list, '
+            'contradictions_found and summary, using empty lists only when no findings are discovered. '
             'Keep summary within 2000 characters. For each finding return source_quote_id and reason. '
             'source_quote_options is grouped by location, then maps ID to literal quote. '
             'Select only from this request; never generate quote text or locations. '
@@ -974,10 +1003,13 @@ class OnlineRunner:
             'An anchor is not semantic proof: preserve material numbers, units, negation, conditions and '
             'comparative strength. Do not use an empty fragment as a substitute for the finding. '
             'If no supplied anchor preserves a discovered finding, return source_quote_id=null and '
-            'explain why in reason; retain its true flag. Do not hide discoveries to fit the catalog. '
+            'explain why in reason; retain the finding in its list. Do not hide discoveries to fit the catalog. '
             'All finding groups including contradictions_found use this same ID-and-reason contract. '
-            'Threat-model boundaries and conditional limits need not contradict the candidate; '
-            'retain them in their respective lists even if the candidate remains supported. '
+            'Report findings before deciding the verdict. Conditions and threat-model boundaries belong '
+            'in their lists even when they support the candidate or are already stated in its value. '
+            'Summary and verdict reasons must not be the only record of an identified condition. '
+            'For each finding, the chosen quote itself must retain the claimed qualifier; surrounding '
+            'context cannot supply a qualifier missing from that quote. If none does, use null and explain. '
             'Use contradictions_found only for passages that contradict the candidate claim. '
             'Describe search terms and findings in summary. Do not claim a full-paper search. '
             'domain_rule_met=met means the evidence meets the rule for this candidate value; a well-supported false '

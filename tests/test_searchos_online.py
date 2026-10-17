@@ -64,8 +64,8 @@ class OnlineTests(unittest.TestCase):
         self.judgment = {'judgments': [{'candidate_index': 0, 'verdict': 'supported',
                                        'location_checked': True, 'domain_rule_met': 'met', 'domain_rule_reason': 'Synthetic field rule satisfied',
                                        'counter_evidence_search': {'summary': 'Synthetic search for not and only',
-                    'segments_searched': ['paragraph:1'], 'negation_found': False,
-                    'conditional_limits_found': False, 'threat_model_boundary_found': False, 'contradictions_found': []},
+                    'segments_searched': ['paragraph:1'], 'negation_evidence': [],
+                    'conditional_limits_evidence': [], 'threat_model_boundary_evidence': [], 'contradictions_found': []},
                                        'reason': 'Synthetic test judgment.'}]}
         self.opened = []
         self.provider = Provider()
@@ -308,16 +308,16 @@ class OnlineTests(unittest.TestCase):
         self.assertEqual(result['coverage']['running_tasks'], 0)
         self.assertEqual(models['judge'].calls, [])
 
-    def test_failed_search_is_not_empty_success_and_retried_once_on_resume(self):
+    def test_timed_out_search_is_not_empty_success_or_retried_on_resume(self):
         self.provider.fail = True
         first, _ = self.run_fixture()
         second, _ = self.run_fixture()
-        self.assertEqual(len(self.provider.calls), 2)
+        self.assertEqual(len(self.provider.calls), 1)
         self.assertEqual(self.opened, [])
         search = next(iter(load(self.path)['online']['searches'].values()))
         self.assertEqual(search['status'], 'failed')
-        self.assertEqual(search['attempts'], 2)
-        self.assertEqual(len(search['previous_attempts']), 1)
+        self.assertEqual(search['attempts'], 1)
+        self.assertEqual(search.get('previous_attempts', []), [])
         self.assertGreater(second['coverage']['failure_patterns'], 0)
         self.assertNotEqual(second['stop_reason'], 'diminishing_returns')
 
