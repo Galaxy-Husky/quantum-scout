@@ -116,32 +116,21 @@ case_description 应明确案例身份，不能只提供无定义的内部编号
 
 review_contract=4；每项语义判断包含counter_evidence_search：segments_searched、negation_found、conditional_limits_found、threat_model_boundary_found、对应三个*_evidence对象列表、contradictions_found与summary。
 每个true必须对应非空举证列表，false只能空列表；每项举证/矛盾含location及1–50字符连续原文quote，location在实际提供并声明搜索的分段内。summary为1–2000字符且非空白，说明发现及其对结论的影响；不声称搜索未提供全文。
-发现却无法合规举证属于counter_evidence_unsubstantiated，不能改报false或用abstain绕过；结构/接地失败共用一次格式纠错，保留原响应与实际长度，最终违规error/contract_violation。
+发现却无法合规举证属于counter_evidence_unsubstantiated，不能改报false或用abstain绕过；语义评审结构或接地失败不追加格式纠错，保留原响应与实际长度，以error/contract_violation停止。
 suppressed_findings仅防同candidate_index三个flag的true→false，不比较矛盾列表/summary，不发现首次遗漏；counter_search_valid不能补足这些缺口。字段合规不证明反证搜索充分。
 归属/语义分别保存并绑定同report_id/candidate_index、case_id、value_text、location、source_sha256；review_policy.supported_pair统一校验，不另设宽松守卫。FILLED还须来源opened、无冲突、归属attributed、语义supported、location_checked=true、domain_rule_met=met。
 
-### 短引纠错
+### 短引锚点
 
-ContextGem 发送前仅将句子视图的空白归一为空格，防止提示清洗粘词；保存的正文、分句边界及接地原件不变。
+ContextGem发送前仅将句子视图空白归一为空格，保存正文和接地原件不变。抽取及语义评审复用原文片段切分器；目录项为不超过50字符的连续原文，不修改模型已选文字。
 
-纠错按以下顺序执行，结构与接地失败共享一次机会：
+语义评审发送前将当前候选、上下文和 source_quote_options 一同保存并记录请求哈希。 上下文在请求中仅保留一份，目录按 location → {ID: 原文短引} 分组，避免重复位置与字段名；紧凑JSON仅去除序列化空白，不改原文字符串。一次 AnchoredJudgments 响应完成候选结论、领域条件和发现判断；每项发现只返回 source_quote_id（无合适片段时为null）及非空 reason，不生成或覆盖引文、位置。短ID绑定候选/上下文命名空间；程序从本次已保存请求读取目录，还原 quote/location，按原有 Judgments、接地和双审守卫检验后才能提交。
 
-| 步骤 | 约束 |
-|---|---|
-| 确定范围 | 已接地但超长的引文只取自身范围内的词边界子片段；结构合规但原位置找不到的短引，只取原有效位置的片段。 |
-| 生成选项 | 枚举1–50字符连续原文，保留原始空白并作下列词法筛选；已接地超长引文再按原文位置去掉被其他合格片段包含的片段，非原文引文的候选不作此去重。程序不作语义选择。 |
-| 选择与合并 | 模型只选 option_id，不自由生成引文或词序号；从哈希核验后的已保存请求读取选项，路径一一绑定，其他判断、反证和位置原样保留，合并后重验完整结构及接地。完整选择数组可无损包入 selections 对象，原响应保留。 |
-| 保真复核 | 另一次请求核查是否保留同一反证；按 semantic 计预算，不再格式纠错。模型仅返回 quote_id、support、reason；ID 绑定原调用、选择请求内容及具体短引/路径，程序核验已保存请求哈希并取回原文。未知、重复、缺失 ID、记录变更或非 supported 均拒绝整项判断，不要求模型抄写文字。 |
+未知ID、同组重复ID、位置错配、请求篡改、发现标记与列表不一致均拒绝整项，原响应保留。null以 quote_unlocatable 原因停止，仍沿用 error/contract_violation，不另加运行状态；已发现条件不得因无合适短引而改报false。不同发现类别可引用同一片段。语义评审失败不追加格式纠错、短引重选或独立保真调用；其他模型契约的一次既有格式纠错上限不变。
 
-词法筛选只做三件事：
+片段存在不等于支持成立，数值/单位与条件完整性也不能由字符匹配保证。模型须在原始评审中核对所选短引及上下文是否表达具体发现、完整限定和强度；目录不能表达时显式保留未完成。威胁边界、条件与否定不要求反驳候选，只有 contradictions_found 声明矛盾。实现准入须逐项核对原文支持，隔离假设本身不能证明或否定可实现性，硬件描述不得冒充“明确无需容错”的原文；缺证保留不确定，不推成false。
 
-- 排除纯英文代词/功能词，以及不含字母的孤立数字/符号片段。
-- 正文显式百分数的比较符、数字及百分号连续保留，只覆盖 %、％、‰，不作通用单位解析。
-- 已接地超长引文的子片段保留原引文全部显式英文否定标记及次数；非原文历史短引不强制该标记。
-
-空选项、未知 ID、超长或未接地结果均拒绝，不自动截短、换 ID 或追加纠错。词法检查不验证否定作用域或语义，孤立代词缺少实质反证应判 unclear；保真复核不改变原反证 flag 或结论，也不保证模型判断无误。
-
-OpenAI 兼容传输仅对保真请求启用原生 JSON 模式并记录 response_format，不改共享设置；仍校验完整响应，说明加 JSON 的响应不截取、不重试。
+支持的OpenAI兼容传输对该次语义评审启用JSON模式并记录response_format；仍校验整个响应，不截取正文中的JSON。还原后的发现保留reason，历史无该字段的审计仍可读取；新执行基线必须使用全新workspace，不迁移历史判定。
 
 ## 自检、人工与成本
 

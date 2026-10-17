@@ -17,7 +17,7 @@
 }
 ```
 
-示例不是付费授权。预算按实际 extraction、attribution、semantic 和其他请求累计；纠错及保真请求均计入对应类别，不另维护固定调用下界。以原生调用账本判断消耗，上限不保证完成。
+示例不是付费授权。预算按实际 extraction、attribution、semantic 和其他请求累计；格式纠错及历史保真请求均计入对应类别，不另维护固定调用下界。以原生调用账本判断消耗，上限不保证完成。
 
 从项目根运行，`--workspace` 每次使用明确的新路径：
 
@@ -28,9 +28,11 @@
 ```
 
 `doctor` 不联网；ready 只证明本地构造检查通过。`open-source` 不经搜索，仍执行完整抽取/双审/导出；可显式传 `--expected-title`，不自动取标题。`run` 会真实搜索并使用模型额度。
+`semantic_output_format` 默认 `json_object`；已确认模型/服务支持时可显式设 `json_schema`。严格模式把现有语义契约仅放入 response_format，所有字段显式返回；本地 schema、锚点接地和双审守卫仍执行，服务拒绝或响应违规直接停止，不降级重试。第三十四笔当前网关已返回符合schema的结构，但发现标记与空列表不一致仍被本地守卫拒绝；不将 JSON 语法合法等同于结构或语义成立。
+
 ### 预算与失败处理
 
-省略模型/轮次/时间时实现默认64次/5轮/1200秒，单操作60秒，输出最多4096 token；默认值不是授权。调用与时间按 invocation，正文来源上限、来源/查询恢复配额及引用 HTTP 按 workspace 累计；不从 scope phase 自动继承。实际请求计数见上文账本，模型 SDK 重试为0，格式纠错见[证据协议](evidence.md#短引纠错)。
+省略模型/轮次/时间时实现默认64次/5轮/1200秒，单操作60秒，输出最多4096 token；默认值不是授权。调用与时间按 invocation，正文来源上限、来源/查询恢复配额及引用 HTTP 按 workspace 累计；不从 scope phase 自动继承。实际请求计数见上文账本，模型 SDK 重试为0，语义评审无纠错；锚点与失败处理见[证据协议](evidence.md#短引锚点)。
 
 | 情况 | 当前处理 |
 |---|---|
@@ -51,22 +53,38 @@
 
 抽取使用ContextGem原生JSON数组格式，不要求服务端JSON Schema或maxLength支持。发送前按句列出≤50字符的连续原文片段及本轮ID，模型在value.source_quote_id中选ID，客户端按ID取回原文；不自由生成短引、不截写既有引文、不自动换ID或引用句。完整原响应先保存，选项目录随请求落盘并校验哈希后读取，选择展开后经本地Candidate逐项校验；未知ID或非法项单独拒绝并保留原值，其他合规项继续，不增加请求或纠错。
 
-ContextGem 服务不可用时，原生退路复用相同片段切分器和 source_quote_id 契约，程序从保存目录恢复短引及位置；未知 ID、回传文字或位置覆盖均隔离拒绝，仍须接地与双审。
+仅 ContextGem 本地依赖不可用且尚未发出请求时，原生退路复用相同片段切分器和 source_quote_id 契约，程序从保存目录恢复短引及位置；未知 ID、回传文字或位置覆盖均隔离拒绝，仍须接地与双审。
 
-每次最多8候选；先Candidate契约，再ContextGem引用句唯一映射，再接地，之后逐候选归属/语义双审，成功才投影。部分非法候选隔离并保留原值/错误/调用ID；全违规停止error/contract_violation，空抽取不是违规。句子映射失败不触发服务退路，不靠全文搜索换引用句或任取首个匹配。
-ContextGem发送前的空白处理及反证短引纠错统一见[证据协议](evidence.md#短引纠错)。
+每次最多8候选；先Candidate契约及保存请求的段落/句ID目录校验，再ContextGem引用句唯一映射，再接地，之后逐候选归属/语义双审，成功才投影。未知或跨段句ID拒绝整项候选，不删坏引用后接受原项；句ID目录仅本地保存，不增加模型输入。部分非法候选隔离并保留原值/错误/调用ID；全违规停止error/contract_violation，空抽取不是违规。句子映射失败不触发服务退路，不靠全文搜索换引用句或任取首个匹配。
+ContextGem空白处理及语义评审锚点统一见[证据协议](evidence.md#短引锚点)。
 同来源跨表不共享游标；抽取缓存绑定案例/表/来源版本/分段/字段范围。已获有效归属但缺语义只补语义；已完成双审不重复调用。仅匹配范围的全文处理结束才标done，异常保留本批起点。
 
 ## 评估调度
 
 依次执行八字段问题定义、Track 准入和通过准入后的评分；前置门、缺证处理和部分评分见[准入与评分](evidence.md#准入与评分)，具体字段见[问题定义](evidence.md#问题定义)。停止时按[案例覆盖契约](batch-schema.md#案例覆盖与在线导出)逐案例重算，不跨案例或 Track 拼接。
 
+## 宿主跨来源检索（sandbase）
+
+按用户指定，优先由宿主临时读取 sandbase `multi-source-search` 指令、报告 schema 和原生 validator，不安装第二套运行时，不自建规则比对模块。仅在显式任务中调用，尚未成为原生 runner 的默认阶段。单一搜索渠道记检索局限，不以工具数量阻塞；上游 validator 只证明账本内部结构，不证明来源独立或语义正确。不同查询、搜索工具和镜像 URL 都不能代替[来源独立性核查](evidence.md#文档与独立性)。
+
+宿主报告只作交接输入，不直接作为 calibration batch 或 Candidate 导入，也不成为第二个事实源：
+
+| 上游字段 | 现有链路的交接方式 |
+|---|---|
+| sources[].id/url、claims[].source_ids | 外部 ID 留在原报告中；实际原文 URL 经 `open-source` 进入全新获准 invocation，取得原生来源记录。已读方法论论文不能替代具体案例的证据归属。 |
+| claims[].text/kind | 作为待核查主张；inference 不补证，不将自由文本转换成准入 true/false。 |
+| confidence、independent_source_count | 保留上游原值与独立性理由供审核；不按来源数给原生 Candidate 赋值，不自动将 high 降档以绕过契约。 |
+| conflict、gaps | 供归属和语义复核核查；false 仅表示该检索范围未发现冲突，不能替代反证搜索；gaps 不能自动写成原生 record-gap 理由。 |
+| 原报告未提供的 quote/location | 从对应原文重新抽取、接地并双审；宿主工具响应中的字符定位不等于原生正文接地。 |
+
+本阶段复用已有正文入口与证据守卫；尚无自动账本导入或冲突字段注入评审的实现，不宣称其已通过真实链路验证。每次付费正文处理仍须逐笔授权，不因账本列出多个 URL 自动续跑。
+
 ## 引用身份与扩展
 
 默认关闭。`citation_identity.enabled` 允许 crossref/arxiv/semantic_scholar/openalex；`citation_expansion_backend` 独立选择 none/openalex/semantic_scholar。旧citation_backend仍兼容，但不能与新allowlist重复配置。S2 key可选，匿名429不是缺key；本适配器的OpenAlex需OPENALEX_API_KEY。
 DOI优先已启用Crossref，arXiv优先已启用arXiv；按需S2/OpenAlex补充，无标识不请求、不按标题搜索。Crossref404=unknown，不证明论文不存在。标题相似度>=0.70只是元数据启发式，正文资格独立核查。
 verified要求标识/版本与expected_title一致；缺标识/标题/版本核验或访问受限为unknown；任一mismatch或跨服务标题冲突优先，拦截相关来源候选。unknown不降低正文资格；关闭时不伪造服务失败。多服务全verified与partial分别报告，未调用服务不补造回执。
-每HTTP先持久占预算，身份/扩展共用max_citation_requests；响应最多2MB，限流保留Retry-After并暂停服务。实现有最多一次传输恢复能力，但不授权自动续试；HTTP错误和身份冲突不重试。arXiv间隔>=3.1秒、其他>=1秒，成功/失败/中断回执均缓存，不用恢复产生新重试。
+每HTTP先持久占预算，身份/扩展共用max_citation_requests；响应最多2MB，限流保留Retry-After并暂停服务。不自动重试传输失败；超时暂停该服务，HTTP错误和身份冲突不重试。arXiv间隔>=3.1秒、其他>=1秒，成功/失败/中断回执均缓存，不用恢复产生新重试。
 扩展只从新取得合规双审的FILLED、无冲突、depth=0根开始；depth=1，每父最多5新任务，DOI/arXiv/URL去重，部分方向成功保留partial，元数据不入事实图。Frontier 容量须同时容纳各案例基础任务与扩展任务；按当前上限和任务数核对余量，不另维护固定案例数推算。
 
 ## 状态、导出与兼容
@@ -91,12 +109,13 @@ calibration不建生产库或正式cases；已有SQLite用只读URI执行queries
 | ASReview | `asreview/database/database.py`：record_id 绑定、待标注/决策/排名分离及变更记录 | 状态分离已由 grounding/attributions/reviews 与 `review_policy` 实现；拒绝保留、待审不投影、已审不重复调用。不接入其数据库或主动学习；排序不代替接受。 |
 | QuantumNovelty | `skills/claims_registry/skill.py`、`skills/novelty_audit/skill.py`：数值声明与比较规则由代码审计 | 百分数边界检查、离散评分及归一已由接地门和 `coverage_policy` 执行，不移植领域不匹配的量子优势比较器；`audit_falsify/run.sh` 在所查源码中仍是占位实现。 |
 | academic-research-skills | `scripts/claim_audit_pipeline.py`、`claim_audit_finalizer.py`：结构校验、上下文绑定及确定性裁决汇总 | 上下文绑定已由 `review_policy` 实现，裁决汇总及停止由 `coverage_policy`/`online_policy` 执行；保留按案例/表/版本/分段恢复，不移植另一套缓存。 |
-| scientific-agent-skills | `skills/peer-review/scripts/validate_claim_evidence.py`：claim_id/evidence_ids 关联、支持状态一致性校验 | 保真复核已采用 ID/支持判断契约，并补充保存请求哈希与引用完整性校验；结构校验仍不代表语义真实。 |
+| scientific-agent-skills | `skills/peer-review/scripts/validate_claim_evidence.py`：claim_id/evidence_ids 关联、支持状态一致性校验 | 原始语义评审使用保存的原文片段ID，并核验请求哈希与引用绑定；结构校验仍不代表语义真实。 |
 
-当前实现：抽取按 source_quote_id 取回短引；反证选择从已保存目录解析 option_id，保真复核仅返回 quote_id/support/reason，客户端校验请求哈希及 ID 完整性。具体守卫只在[短引纠错](evidence.md#短引纠错)定义；实现和离线检查不等于真实语义效果已验证。
+当前实现：抽取与原始语义评审按 source_quote_id 还原短引；语义评审在同一次请求输出发现理由，不执行事后重选和独立保真。守卫见[短引锚点](evidence.md#短引锚点)；离线通过不等于真实语义效果已验证。
 
 ## 代码、模型与持久化的职责
 
+- 节约规则适用于整个 skill：宿主工作流、检索与正文读取、抽取、双审、评分、引用扩展及维护验证；所有修改以在不削弱证据完整性、独立双审与停止守卫的前提下，尽量减少模型调用次数和输入量来节省费用；优先代码处理、复用已有结果及去除重复上下文，不新增独立诊断或格式修复调用。新增调用或输入必须说明必要性；先用保存请求离线比较调用路径、输入字符/字节及可得token数，真实费用仅据价格回执，不把字符减少冒充等比例费用下降。
 - 类型、长度、标识绑定、来源哈希、算分、预算和停止条件等确定性规则由代码执行；文档引用同一实现，不要求模型重复计算或抄写不可变字段。
 - 原文、短引、位置及版本先持久化，再以绑定具体请求和证据对象的 ID 供模型引用；程序从已保存记录还原文字。未知、重复、缺失、错配或被篡改的引用必须拒绝，不自动猜配或改写。
 - 模型负责归属、语义支持、领域条件及反证判断，输出绑定 ID 的结论与理由；代码不能把字符串匹配或 ID 有效冒充语义成立。
@@ -113,6 +132,6 @@ calibration不建生产库或正式cases；已有SQLite用只读URI执行queries
 PYTHONPATH=skill/scripts:skill/tests .venv/bin/python -m pytest -o pythonpath=src skill/tests -q
 ```
 
-`tests/test_workflow_contracts.py` 是集成回归；其余活跃测试仅保留在线夹具、ContextGem映射、短引纠错与归属上下文回归。历史文档、其余测试和独立诊断工具已移入 `archive/`，不在默认阅读、测试或运行路径中；需要时先恢复到独立副本并核对依赖。
+`tests/test_workflow_contracts.py` 是集成回归；其余活跃测试仅保留在线夹具、ContextGem映射、单次锚点评审与归属上下文回归。历史文档、其余测试和独立诊断工具已移入 `archive/`，不在默认阅读、测试或运行路径中；需要时先恢复到独立副本并核对依赖。
 
 每轮只交代实际动作、预算、阻塞点、修复/重跑结果和下一步唯一动作。原始请求/响应与失败回执仍由原生运行日志保存，不另建平行分析体系。归档不改变历史 workspace；基线兼容规则见[状态、导出与兼容](#状态导出与兼容)。

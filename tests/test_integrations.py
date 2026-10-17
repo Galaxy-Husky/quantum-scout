@@ -95,6 +95,29 @@ class WorkflowTests(unittest.TestCase):
     extractor = fixtures.OnlineTests.extractor
     run_fixture = fixtures.OnlineTests.run_fixture
 
+    def test_search_timeout_blocks_new_query_requests(self):
+        calls = []
+        async def timeout(query, limit):
+            calls.append(query)
+            raise httpx.ReadTimeout('fixture')
+        self.provider = SimpleNamespace(search=timeout)
+        report, models = self.run_fixture()
+        self.assertEqual(len(models['orchestrator'].calls), 0)
+        runner = OnlineRunner(self.path, self.config, providers={'serper': self.provider})
+        task = {'target_cells': ['problem_definition/TEST-0001.parties_and_roles']}
+        asyncio.run(runner.search('serper', 'different', task))
+        self.assertEqual(calls, ['fixture'])
+
+    def test_contextgem_dispatched_timeout_does_not_fallback(self):
+        async def timeout(*args):
+            raise TimeoutError('dispatched extraction timeout')
+        self.extractor = timeout
+        report, models = self.run_fixture()
+        self.assertEqual(report['stop_reason'], 'error')
+        self.assertEqual(len(models['extraction'].calls), 0)
+        self.assertFalse(any(e['kind'] == 'extraction_fallback'
+                             for e in adapter.load(self.path)['online']['events']))
+
     def test_connect_retry_recovers_before_formal_resume(self):
         original = self.opener
         calls = []
@@ -303,6 +326,17 @@ class WorkflowTests(unittest.TestCase):
 
 
 class ContextGemTests(unittest.TestCase):
+    def test_dispatched_timeout_is_not_local_unavailability(self):
+        async def timeout(*args, **kwargs):
+            raise TimeoutError('fixture')
+        llm = SimpleNamespace(system_message='', extract_concepts_from_document_async=timeout)
+        runner = SimpleNamespace()
+        with patch('contextgem_extractor.make_llm', return_value=llm):
+            with self.assertRaises(TimeoutError):
+                asyncio.run(extract(runner,
+                    {'target_cells': ['problem_definition/TEST-0001.parties_and_roles']},
+                    [{'location': 'page:1', 'text': 'Two parties decide.'}]))
+
     def test_source_quote_choices_preserve_body_and_bound_every_anchor(self):
         from contextgem_extractor import document_for, source_quote_options
         segments = [{'location': 'page:1', 'text': (
@@ -368,6 +402,7 @@ class ContextGemTests(unittest.TestCase):
             if runner.calls == 1:
                 runner.extraction_quote_options.clear()  # Only the persisted request remains authoritative.
             self.assertEqual(json.dumps(kwargs['messages']).count('TEST-0001.parties_and_roles'), 1)
+            self.assertEqual(json.dumps(kwargs['messages']).count('unique-field-rule'), 1)
             self.assertEqual(kwargs['extra_body'], {'enable_thinking': False})
             self.assertEqual(kwargs['temperature'], 0.0)
             self.assertEqual(kwargs['num_retries'], 0)
@@ -384,7 +419,8 @@ class ContextGemTests(unittest.TestCase):
         body = ('Two parties decide. Evidence exists. Classical two–way timing\nprotocols are '
                 'vulnerable to\nasymmetric channel delays. Bidirectional Hong–Ou–Mandel\n(HOM) interferometry.')
         with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', completion):
-            result = asyncio.run(extract(runner, {'target_cells': ['problem_definition/TEST-0001.parties_and_roles']},
+            result = asyncio.run(extract(runner, {'target_cells': ['problem_definition/TEST-0001.parties_and_roles'],
+                'column_rules': {'parties_and_roles': 'unique-field-rule'}},
                 [{'location': 'page:1', 'text': 'Two parties decide.'}, {'location': 'page:2', 'text': body}]))
         self.assertEqual(runner.calls, 1)
         self.assertEqual(runner.extraction_quote_options, {})
@@ -401,7 +437,8 @@ class ContextGemTests(unittest.TestCase):
         item_value['source_quote_id'] = next(qid for qid, quote in runner.extraction_quote_options.items()
                                    if quote.startswith('Classical'))
         with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', completion):
-            result = asyncio.run(extract(runner, {'target_cells': ['problem_definition/TEST-0001.parties_and_roles']},
+            result = asyncio.run(extract(runner, {'target_cells': ['problem_definition/TEST-0001.parties_and_roles'],
+                'column_rules': {'parties_and_roles': 'unique-field-rule'}},
                 [{'location': 'page:1', 'text': 'Two parties decide.'}, {'location': 'page:2', 'text': body}]))
         self.assertEqual(result['candidates'], [])
         self.assertTrue(any(args[0] == 'failure' and data.get('failure_type') == 'quote_not_found'
@@ -414,7 +451,8 @@ class ContextGemTests(unittest.TestCase):
         bad = deepcopy(content[0]); bad['concept_id'] = 'C1'
         bad['extracted_items'][0]['value']['confidence'] = 'high'
         content.append(bad)
-        context = {'target_cells': ['problem_definition/TEST-0001.parties_and_roles',
+        context = {'column_rules': {'parties_and_roles': 'unique-field-rule'},
+                   'target_cells': ['problem_definition/TEST-0001.parties_and_roles',
                                    'problem_definition/TEST-0001.constraints']}
         segments = [{'location': 'page:1', 'text': 'Two parties decide.'},
                     {'location': 'page:2', 'text': body}]
@@ -433,12 +471,23 @@ class ContextGemTests(unittest.TestCase):
                 rejection = next(data for args, data in reversed(runner.events) if args[0] == 'contract_rejection')
                 self.assertEqual(rejection['candidate'], bad['extracted_items'][0])
                 self.assertIn('source quote ID', rejection['validation_errors'][0]['msg'])
+        # One bad reference must reject its whole item before ContextGem bulk mapping.
+        bad['extracted_items'][0]['value'] = deepcopy(content[0]['extracted_items'][0]['value'])
+        bad['extracted_items'][0]['reference_paragraphs'] = [
+            {'reference_paragraph_id': 'P0', 'reference_sentence_ids': ['P0-S0', 'P0-S99']}]
+        with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', completion):
+            result = asyncio.run(extract(runner, context, segments))
+        self.assertEqual(len(result['candidates']), 1)
+        rejection = next(data for args, data in reversed(runner.events) if args[0] == 'contract_rejection')
+        self.assertEqual(rejection['candidate']['reference_paragraphs'][0]['reference_sentence_ids'],
+                         ['P0-S0', 'P0-S99'])
+        self.assertIn('sentence reference', rejection['validation_errors'][0]['msg'])
         content[0]['extracted_items'][0]['value']['confidence'] = 'high'
         from searchos_online import ContractViolation
         with patch('searchos.config.models.resolve_profile', return_value=profile), patch('litellm.acompletion', completion):
             with self.assertRaises(ContractViolation):
                 asyncio.run(extract(runner, context, segments))
-        self.assertEqual(runner.calls, 6)  # One request per extraction; no item repair or fallback.
+        self.assertEqual(runner.calls, 7)  # One request per extraction; no item repair or fallback.
         self.assertEqual(segments[1]['text'], body)
 
 
@@ -486,6 +535,20 @@ class ContextContractTests(unittest.TestCase):
         self.assertEqual(isolate_contract_items('{bad', ['a']), ('{bad', [], 0))
 
 class BackendTests(unittest.TestCase):
+    def test_timeout_stops_service_without_retry(self):
+        from citation_backends import CitationRequestError
+        requests = []
+        def handler(request):
+            requests.append(request)
+            raise httpx.ReadTimeout('fixture', request=request)
+        backend = CitationBackend('semantic_scholar', httpx.MockTransport(handler))
+        with self.assertRaisesRegex(CitationRequestError, 'timeout'):
+            asyncio.run(backend._get('https://api.semanticscholar.org/graph/v1/paper/a'))
+        with self.assertRaisesRegex(CitationRequestError, 'service_paused_after_timeout'):
+            asyncio.run(backend._get('https://api.semanticscholar.org/graph/v1/paper/b'))
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(backend.requests), 1)
+
     def test_s2_uses_both_directions_and_returns_metadata_only(self):
         requests = []
         def handler(request):

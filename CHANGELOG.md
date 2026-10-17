@@ -2,6 +2,32 @@
 
 ## v21 — 2026-10-17
 
+- 第三十四笔：3/64次、43.31/1200秒、53293 tokens（USD未知），0/8 FILLED；严格json_schema请求实际返回且结构校验通过，但首字段两类发现标记true、证据列表空，一致性守卫拒绝，incomplete/error/contract_violation。引用目录保存成功、无非法引用项，逐项拒绝本笔未触发；请求哈希/基线通过，无纠错/退路/续跑。回执v21-reference-isolation-validation-20261017/execution.json。
+
+- 第三十三笔后补齐ContextGem批量引用映射前的逐项隔离：按本轮保存段落/句ID目录拒绝整项非法候选，目录不重复发送模型，原响应及坏引用保留，不猜配/删引用/重试。历史响应离线回放拒绝parties_and_roles一项、其余7项仅通过过滤；34项/4子用例集成回归通过（40.85秒），含真实库混合好坏引用及全坏停止，付费0。真实状态仍0/8、严格schema未验证，结果追加原execution.json。
+
+- 第三十三笔严格输出复验：1/64次、30.50/1200秒、32152 tokens（USD未知），问题定义0/8；ContextGem返回不存在的P0-S55（保存请求P0有50句），引用映射拒绝整批，incomplete/error/LLMExtractionError。未调度严格schema语义请求，不能判断网关支持；无退路/纠错/续跑，执行基线及请求哈希通过。下一步保存响应复现引用逐项隔离；回执v21-strict-output-validation-20261017/execution.json。
+
+- 第三十二笔后修复输出协议：新增显式semantic_output_format=json_schema，由既有LangChain生成严格schema并经response_format发送，提示词不重复；原JSON模式保留兼容配置，无自动降级。保存5次响应回放接受4次完整响应、拒绝1次畸形响应；11项锚点回归与1项网关400不重试回归通过。新schema3151字符、旧2656字符，增加495字符用于结构约束，非节费实证；付费0，严格模式网关尚未在线验证，追加原execution.json并准备新config。
+
+- 第三十二笔节约优化真实复验：11/64次、105.71/1200秒、143348 tokens（USD未知），问题定义4/8 FILLED，未准入/评分；第5候选inputs_and_outputs的语义响应将后续字段写进segments_searched转义字符串，缺字段，incomplete/error/contract_violation停止。4次锚点还原与双审通过、请求哈希全通过，未追加纠错/保真/退路；首次语义输入28317→18052 tokens仅为跨笔观测，不证明因果或费用比例。搜索/引用暂停未触发，不续跑；回执v21-cost-validation-20261017/execution.json。
+
+- 全 skill 节约审计：入口引用统一规则；紧凑模型JSON/schema、仅传目标字段规则、ContextGem规则去重、查询失败按目标筛选；已发抽取请求失败不再转原生退路，引用传输不自动重试，搜索/引用429或超时暂停服务。清除旧语义纠错文案。全量99项/116子用例通过；后增集成检查33项/4子用例通过，1项初始化夹具修正后定向通过（1.04秒）。保存请求回放ContextGem系统12258→10988字符、归属JSON12842→12810字符，非token/USD降幅；付费0，真实状态未变。回执v21-skill-cost-audit-20261017/execution.json。
+
+- 按用户要求将节费目标写入workflow职责规则并由AGENTS引用：所有修改尽量减少模型调用和输入，不牺牲证据及独立双审。语义请求去掉重复上下文、锚点按位置分组、紧凑JSON；第三十一笔保存请求用户消息84705→50084字符（−40.87%），416锚点及上下文/其他账本字段无损，输出schema不变。11项定向离线回归通过（19.02秒），新增付费0；字符减少不等于同比费用减少，结构异常原因及真实效果仍未验证，结果追加原execution.json。
+
+- 第三十一笔3/64次、44.43/1200秒、65319 tokens（USD未知）：新workspace问题定义0/8 FILLED，首字段uncertain，未准入/评分；incomplete/error/contract_violation。首次AnchoredJudgments响应含无效冒号键、缺必填字段及reason，锚点还原前拒绝；未追加纠错/保真，S4未验证，不续跑。请求哈希通过，上下文重复可精简但不能据n=1归因；回执v21-anchor-review-validation-20261017/execution.json。
+
+- 用一次 AnchoredJudgments 原始语义评审替换反证短引纠错与独立保真：只返回已保存原文片段ID和发现理由，程序校验请求哈希、还原短引/位置并执行既有守卫；null/未知ID不纠错、不静默删发现。旧纠错测试单文件原样保留于archive/tests，活跃回归首轮97项/116子用例通过、1项旧范围停止断言失败，按新契约修正后定向1项/5子用例通过；保存第三十笔输入产生416个≤50字符锚点、旧自由引文响应被拒绝，doctor ready，付费0。准备回执v21-anchor-review-validation-20261017/execution.json；原生第三十笔7/8未变，新架构未真实验证。
+
+- 第三十笔21/64次、159.88/1200秒、182294 tokens（USD未知）：新workspace八字段7/8 FILLED，部署边界uncertain，未进入准入/评分；incomplete/error/contract_violation。保真第三个quote_id被改为自造短语，前两ID正确仍拒绝整项；未到S4，不能验证其语义修复，不续跑。回执v21-s4-semantics-validation-20261017/execution.json；下一步保存响应回放修ID绑定。
+
+- S4评审修复：保真按 finding 类别核查，威胁边界不必反驳候选，仍保留“最关键”等原发现强度；主评审逐项核对实现条件，不将硬件描述冒充明确无需容错。修改后定向31项及7个子用例通过（42.18秒），离线doctor ready；付费0，真实效果未验证。新笔准备回执 v21-s4-semantics-validation-20261017/execution.json，待逐笔授权，原第二十九笔状态不变。
+
+- 撤回 sandbase 双搜索能力硬门槛；workflow 固定宿主账本到既有正文入口的交接边界，不新增导入器。保存响应中两条短引定位通过，篡改短引及缺少双审均拒绝；偏移仅针对宿主响应，非原生接地。付费调用0，第二十九笔S4状态不变；更新同一 sandbase-direct-20261017/execution.json。
+
+- sandbase 临时加载：npm 网络失败后直接读取上游 Skill/schema，使用原生 validator 验证真实两来源账本；未知来源及虚高置信度拒绝，现有 Candidate 拒绝直接账本和 high。1/6搜索、3/6正文打开（2成功）、付费模型0；单一搜索渠道仅为覆盖局限（已撤回其硬门槛）；原生接入未验证，未写入事实或启用规则降级。回执 sandbase-direct-20261017/execution.json。
+
 - 第二十九笔32/64次、280.83/1200秒、618989 tokens：原生8/8，QS S1–S3=true、S4未完成，未评分；incomplete/error/contract_violation。两次保真ID及保存请求哈希均通过，先supported后S4 not_supported停止；3次ContextGem目录保存路径触发，原生退路未触发。S4硬件推断不等于原文明示无需容错，所审页5–6无对应措辞；保留原判断与回执，不自动续跑。回执v21-framework-reuse-validation-20261017/execution.json。
 
 - 完成七框架参考与现有组件逐项核对：修复ContextGem目录仅内存解析及原生退路自由生成短引，统一保存请求ID解析；共享片段切分器，保留候选隔离、接地和双审。普通日志改为锁内原子写事实，失败事件仍投影。状态/恢复、算分/停止沿用已有实现，不引入第二套数据库、缓存或规则；分组离线共118项回归/123个子用例通过：主组80通过、1项新增测试缺少在线初始化，修正后与ContextGem内存丢失检查定向2项通过；其余在线/固定正文37项通过。无网络doctor ready，付费调用0；下一笔仅准备，真实效果未验证。

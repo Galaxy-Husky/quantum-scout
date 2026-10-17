@@ -175,11 +175,13 @@ class WorkflowContractTests(unittest.TestCase):
         judgment['judgments'][0]['counter_evidence_search']['segments_searched'] = ['paragraph:999']
         result, _ = self.run_fixture(judge=judgment)
         self.assertEqual(result['coverage']['filled'], 0)
-        self.assertEqual(result['stop_reason'], 'budget_exhausted')
+        self.assertEqual(result['stop_reason'], 'error')
+        self.assertEqual(result['operational_cause'], 'contract_violation')
+        self.assertEqual(result['model_calls'], 3)  # No second semantic call on invalid scope.
         raw = adapter.load(self.path)
-        self.assertEqual(raw['reviews'][0]['verdict'], 'abstain')
-        self.assertTrue(any(e.get('failure_type') == 'counter_evidence_scope_invalid'
-                            for e in raw['online']['events']))
+        self.assertEqual(raw['reviews'], [])
+        self.assertTrue(any('unknown source location' in str(e)
+                            for e in raw['online']['events'] if e['kind'] == 'failure'))
 
     def test_explicit_hard_gaps_leave_blocked_tasks_and_stop_operationally(self):
         # Constructed reachability test, never added to research workspaces.

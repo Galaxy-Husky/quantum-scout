@@ -155,23 +155,7 @@ class CitationBackend:
                 self.notify(record['cache_key'], original)
 
     async def _get(self, url, params=None, purpose='citation_identity'):
-        try:
-            return await self._request(url, params, purpose, attempt=1)
-        except CitationRequestError as exc:
-            if str(exc) not in {'timeout', 'transport_error'}:
-                raise
-            first = self.requests[-1]
-            # A distinct persistent attempt key bounds retries even after process restarts.
-            retry_key = first['cache_key'] + ':retry:1'
-            if retry_key not in self.request_store:
-                await asyncio.sleep(1.0)
-            body = await self._request(url, params, purpose, attempt=2)
-            first['retry_recovered'] = True
-            original = self.request_store[first['cache_key']]
-            original['retry_recovered'] = True
-            if self.notify:
-                self.notify(first['cache_key'], original)
-            return body
+        return await self._request(url, params, purpose)
 
     async def _request(self, url, params=None, purpose='citation_identity', attempt=1):
         params = dict(params or {})
@@ -191,6 +175,9 @@ class CitationBackend:
         if any(r.get('backend') == self.name and r.get('status_code') == 429
                for r in self.request_store.values()):
             raise CitationRequestError('service_paused_after_429')
+        if any(r.get('backend') == self.name and r.get('reason') == 'timeout'
+               for r in self.request_store.values()):
+            raise CitationRequestError('service_paused_after_timeout')
         if self.name == 'openalex' and not os.environ.get('OPENALEX_API_KEY'):
             raise CitationRequestError('missing_api_key')
         if self.charge:
