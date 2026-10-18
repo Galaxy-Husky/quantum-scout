@@ -39,9 +39,10 @@
 | budget_exhausted | 在线轮次、时间或总模型调用预算到限，保存 budget_cause | incomplete / false |
 | diminishing_returns | 无待处理种子、来源或分段；末 N 条不同成功查询均无新来源 | incomplete / false |
 | operational_pool_exhausted | 无可执行操作或未尝试来源；提交完整 actions/endpoints/rationale | incomplete / false |
-| user_aborted / error | 用户中断 / 不可恢复错误，保存原因及恢复点 | incomplete / false |
+| user_aborted / error | 显式用户取消 / 执行中断或不可恢复错误，保存来源、原因及恢复点 | incomplete / false |
 
 previous_accepted_case_ids 必须来自已验证批次/数据库，不得伪造。completed 不代表证据充分。
+新中断回执的stop_evidence保留error_kind、error_type、initiator、reason及request_ref；来源缺失为unknown，显式来源入口见[状态与兼容](workflow.md#状态导出与兼容)。历史user_aborted不追溯改写，不能仅据该旧枚举推断用户意图。
 `checkpoint.stop_evidence` 的操作性举证：
 
 - diminishing_returns：`basis="new_sources"`、`window_query_ids` 精确等于末 N 条不同成功查询 ID、非空 rationale。N 来自当前配置；失败请求不算零新增，分页不算独立查询。
@@ -84,7 +85,7 @@ case_audit 若存在须匹配，但不要求 audit_passed=true；self_audit 必�
 coverage_status 为 covered/not_applicable；后者只允许有正文支持的问题定义。
 对应 source_id 必须是 opened，无冲突；标志或缺失 reason 本身不构成覆盖。
 
-`export_batch.py` 只输出同一运行已复核且无冲突的事实；不导出旧候选为已证实数据。
+`export_batch.py` 的案例证据只收录同一运行满足接受契约、字段可形成结论的评审记录，不把旧候选或该记录的存在写成已证实语义真值；接受与验证的含义见[证据协议](evidence.md#案例归属与独立语义复核)。案例pending_aggregation保存待汇总候选、完整原文及评审供人工查看，不计入定义/准入/评分证据；该列表为派生输出，不是新事实账本。
 预算停止原样保留，并在 stop_evidence.budget_cause 记录具体限额。
 
 在线 export_version=2 的 review_audit 保存 attributions、reviews 和 attribution_checks，包含未通过的判断。

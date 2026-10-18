@@ -13,15 +13,14 @@ import shutil
 import warnings
 
 from schema_generator import SKILL_ROOT, TRACK_SKILLS, digest, domain_config, generate, write_strategy_skills
-from review_policy import find_decision, bound, attributed, supported_pair, source_depth, nonempty, source_reviewable, citation_allowed
+from review_policy import find_decision, bound, attributed, supported_pair, source_depth, nonempty, source_reviewable, citation_allowed, review_accepted
 from searchos_project import ProjectLayout, WorkspaceLayout
 from searchos.skills.catalog.registry import SkillRegistry
 from searchos.skills.runtime.executor_runtime import ExecutionPolicy, run_executor
 from searchos.socm.coverage import CellStatus, ColumnDesc
-from searchos.socm.evidence import EvidenceNode, EvidenceEdge, EvidenceRelation
+from searchos.socm.evidence import EvidenceNode
 from searchos.socm.frontier import FrontierTask, FrontierTaskStatus, MAX_FRONTIER_CAP
 from searchos.socm.state import SearchState
-from searchos.socm.strategy import StrategyPattern, AntiPatternKind, AntiPatternScope
 from searchos.socm.workspace import WorkspaceManager
 
 
@@ -79,7 +78,32 @@ def value_text(value):
     return str(value)
 
 
-def project(meta):
+def task_claims(meta):
+    """Read ownership without modifying legacy workspaces."""
+    claims = meta.get('claimed_tasks', {})
+    if isinstance(claims, dict):
+        return claims
+    invocations = meta.get('online', {}).get('invocations', [])
+    return {task_id: {'owner': next((i['started_at'] for i in reversed(invocations)
+        if i.get('status') == 'running' and i.get('active_task') == task_id), 'manual'),
+        'started_at': None} for task_id in claims}
+
+
+def claim_task(meta, task_id, owner):
+    claims = dict(task_claims(meta))
+    if task_id in claims:
+        raise ValueError('Task already claimed')
+    claims[task_id] = {'owner': owner, 'started_at': now()}
+    meta['claimed_tasks'] = claims
+
+
+def release_claim(meta, task_id):
+    claims = dict(task_claims(meta))
+    del claims[task_id]
+    meta['claimed_tasks'] = claims
+
+
+def project(meta, *, with_tasks=True):
     """Rebuild the SearchOS scheduling projection from the adapter's audit facts."""
     state = SearchState(intent=meta['intent'])
     coverage = state.coverage_map
@@ -89,22 +113,8 @@ def project(meta):
         if old.get('value') is not None and old.get('value') != 'insufficient_evidence':
             coverage.cells[cell_id].status = CellStatus.UNCERTAIN
             coverage.cells[cell_id].display_hint = value_text(old['value'])
-    for event in meta.get('online', {}).get('events', []):
-        if event['kind'] == 'failure':
-            failure = event['failure_type']
-            kind = (AntiPatternKind.QUERY if failure == 'search_failed' else
-                    AntiPatternKind.SOURCE if failure in {'source_unavailable', 'context_limit'} else
-                    AntiPatternKind.CLAIM)
-            state.strategy_log.record(StrategyPattern(kind=kind, signature=digest(event),
-                reason=failure + ': ' + event.get('reason', event.get('error_type', '')),
-                scope=AntiPatternScope(target_cells=event.get('target_cells', [])),
-                created_by='quantum-online'))
-    for cell_id, gap in meta.get('gaps', {}).items():
-        coverage.cells[cell_id].status = CellStatus(gap['status'])
-        if gap['status'] == 'hard_cell':
-            state.strategy_log.record(StrategyPattern(kind=AntiPatternKind.SOURCE,
-                signature=digest([cell_id, gap]), reason=gap['reason'],
-                scope=AntiPatternScope(target_cells=[cell_id]), created_by='quantum-scout'))
+    for cell_id in meta.get('gaps', {}):
+        coverage.cells[cell_id].status = CellStatus.MISSING
     for report_id, entry in meta['grounding'].items():
         request, report = entry['request'], entry['report']
         table_id = request['table_id']
@@ -114,19 +124,6 @@ def project(meta):
             if cell.status != CellStatus.FILLED:
                 cell.status = CellStatus.UNCERTAIN
                 cell.display_hint = value_text(candidate['value_text'])
-        for failure in report['grounding_failures']:
-            cell_id = key(table_id, failure['case_id'], failure['field'])
-            state.strategy_log.record(StrategyPattern(kind=AntiPatternKind.CLAIM,
-                signature=digest([report_id, failure]), reason=failure['failure_type'],
-                scope=AntiPatternScope(target_cells=[cell_id]), created_by='quantum_grounding'))
-    for decision in meta.get('attributions', []):
-        if decision['attribution'] != 'attributed':
-            entry = meta['grounding'][decision['report_id']]
-            candidate = entry['report']['validated_candidates'][decision['candidate_index']]
-            state.strategy_log.record(StrategyPattern(kind=AntiPatternKind.CLAIM,
-                signature=digest(decision), reason='attribution_' + decision['attribution'] + ': ' + decision['attribution_reason'],
-                scope=AntiPatternScope(target_cells=[key(entry['request']['table_id'], candidate['case_id'], candidate['field'])]),
-                created_by=decision['reviewer_id']))
     # Both independent decisions must pass; legacy semantic-only facts stay UNCERTAIN.
     supported = {}
     for review in meta['reviews']:
@@ -135,27 +132,22 @@ def project(meta):
         candidate = entry['report']['validated_candidates'][review['candidate_index']]
         cell_id = key(request['table_id'], candidate['case_id'], candidate['field'])
         attribution = find_decision(meta, 'attributions', review['report_id'], review['candidate_index'])
-        if (not supported_pair(attribution, review, candidate)
-                or not source_reviewable(request['source'], review)
-                or not citation_allowed(meta, candidate['source_id'])):
-            state.strategy_log.record(StrategyPattern(kind=AntiPatternKind.CLAIM,
-                signature=digest(review), reason='review_not_accepted: ' + review['reason'],
-                scope=AntiPatternScope(target_cells=[cell_id]), created_by=review['reviewer_id']))
+        if not review_accepted(meta, attribution, review, candidate, request['source']):
             continue
         value = value_text(candidate['value_text'])
         supported.setdefault(cell_id, []).append((value, review, candidate, request))
     for cell_id, claims in supported.items():
         cell = coverage.cells[cell_id]
         nodes = []
-        fact_ids = {}
+        fact_ids = set()
         for value, review, candidate, request in claims:
             receipt = candidate['grounding']
             evidence_id = 'qs_' + digest([review['report_id'], review['candidate_index']])[:24]
             source = request['source'].get('url') or request['source']['source_id']
-            identity = (value, source, receipt['source_sha256'])
+            identity = (review['report_id'], review['candidate_index'])
             if identity in fact_ids:
                 continue
-            fact_ids[identity] = evidence_id
+            fact_ids.add(identity)
             # Preserve case-sensitive scientific values and document versions.
             # Upstream add_node lowercases values and omits the text hash.
             state.evidence_graph.nodes.append(EvidenceNode(id=evidence_id, finding=value, value=value,
@@ -166,95 +158,24 @@ def project(meta):
                 span=tuple(receipt['span']), text_hash=receipt['source_sha256']))
             cell.supporting_evidence_ids.append(evidence_id)
             nodes.append((value, evidence_id))
-        cell.has_conflict = len({v for v, *_ in claims}) > 1
-        cell.status = CellStatus.UNCERTAIN if cell.has_conflict else CellStatus.FILLED
-        cell.best_alignment = 'partial' if cell.has_conflict else 'full'
-        cell.display_hint = claims[0][0]
-        if cell.has_conflict:
-            cell.conflict_evidence_ids = [node_id for _, node_id in nodes]
-            for index, (value, node_id) in enumerate(nodes):
-                for other_value, other_id in nodes[index + 1:]:
-                    if value != other_value:
-                        state.evidence_graph.add_edge(EvidenceEdge(from_id=node_id, to_id=other_id,
-                                                                  relation=EvidenceRelation.CONFLICT))
-    for case_id in meta['case_ids']:
-        definition_keys = [key('problem_definition', case_id, f) for f in meta['config']['fields']]
-        # Explicit absent-field reasons complete the audit, not evidence coverage.
-        definition_complete = all(coverage.cells[k].status == CellStatus.FILLED or
-            meta.get('gaps', {}).get(k, {}).get('reason') or
-            (meta['legacy_values'].get(k, {}).get('value') is None and meta['legacy_values'].get(k, {}).get('reason'))
-            for k in definition_keys)
-        for table in meta['schema']['tables']:
-            tid = table['table_id']
-            cells = [key(tid, case_id, field) for field in table['attributes']]
-            gaps = [k for k in cells if coverage.cells[k].status not in {CellStatus.FILLED, CellStatus.HARD_CELL}]
-            if not gaps:
-                continue
-            task_id = 'qs_' + digest([case_id, tid])[:20]
-            status, deps, skills, priority = FrontierTaskStatus.PENDING, [], [], .9
-            if tid != 'problem_definition':
-                track, kind = tid.rsplit('_', 1)
-                if kind == 'admission':
-                    skills = [TRACK_SKILLS[track]]
-                    priority = .8
-                    if not definition_complete:
-                        status = FrontierTaskStatus.BLOCKED
-                        deps = ['qs_' + digest([case_id, 'problem_definition'])[:20]]
-                else:
-                    skills = ['quantum-scoring']; priority = .5
-                    admission = [coverage.cells[key(track + '_admission', case_id, c)]
-                                 for c in meta['config']['tracks'][track]['admission_criteria']]
-                    if any(c.status == CellStatus.FILLED and c.display_hint == 'false' for c in admission):
-                        continue
-                    if not all(c.status == CellStatus.FILLED and c.display_hint == 'true' for c in admission):
-                        status = FrontierTaskStatus.BLOCKED
-                        deps = ['qs_' + digest([case_id, track + '_admission'])[:20]]
-            if status == FrontierTaskStatus.PENDING and task_id in meta['claimed_tasks']:
-                status = FrontierTaskStatus.RUNNING
-            task = FrontierTask(id=task_id, question=f'{case_id}: fill and independently verify {tid}',
-                table_id=tid, target_cells=gaps, skills=skills, status=status, blocked_by=deps,
-                priority=min(1.0, priority + .2 * sum(coverage.cells[k].status == CellStatus.UNCERTAIN for k in gaps) / len(gaps)),
-                created_by='quantum-scout', planner='coverage-heuristic',
-                task_prompt='Do not treat quote matching or coverage as semantic verification. ' +
-                            json.dumps({'case_id': case_id, 'table_id': tid, 'target_cells': gaps}, ensure_ascii=False))
-            # Avoid Frontier.add() silently evicting tasks at its capacity limit.
+        # Multiple candidate identities need explicit aggregation, even if text matches.
+        pending = len(nodes) > 1
+        cell.status = CellStatus.UNCERTAIN if pending else CellStatus.FILLED
+        cell.best_alignment = 'partial' if pending else 'full'
+        cell.display_hint = 'aggregation_pending' if pending else claims[0][0]
+    if with_tasks:
+        from online_policy import action_plan
+        for item in action_plan(meta, state)['actions']:
+            status = (FrontierTaskStatus.RUNNING if 'task_claimed' in item['blocked_reasons'] else
+                      FrontierTaskStatus.BLOCKED if item['blocked_reasons'] else FrontierTaskStatus.PENDING)
             if len(state.frontier.questions) >= MAX_FRONTIER_CAP:
                 raise ValueError('Frontier capacity exceeded; use a smaller explicit case scope')
-            state.frontier.add(task)
-    for record in meta.get('citation_tasks', {}).values():
-        if record['status'] != 'pending':
-            continue
-        base = next((t for t in state.frontier.questions if t.id == record['base_task_id']), None)
-        if base is None:
-            base = FrontierTask(**record['base_task'])
-        if base.table_id.endswith('_scoring'):
-            track = base.table_id.rsplit('_', 1)[0]
-            admission = [coverage.cells[key(track + '_admission', record['case_id'], c)]
-                         for c in meta['config']['tracks'][track]['admission_criteria']]
-            base.blocked_by = [] if all(c.status == CellStatus.FILLED and c.display_hint == 'true' for c in admission) else [record['base_task_id']]
-        elif base.table_id.endswith('_admission'):
-            cid = record['case_id']
-            base.blocked_by = [] if all(coverage.cells[key('problem_definition', cid, f)].status == CellStatus.FILLED
-                or meta.get('gaps', {}).get(key('problem_definition', cid, f), {}).get('reason')
-                for f in meta['config']['fields']) else ['qs_' + digest([cid, 'problem_definition'])[:20]]
-        if len(state.frontier.questions) >= MAX_FRONTIER_CAP:
-            raise ValueError('Frontier capacity exceeded by citation tasks')
-        task = FrontierTask(id=record['id'], kind='explore', depth=1, parent_id=record['parent_node_id'],
-            question='Verify citation body: ' + record['url'], table_id=base.table_id,
-            target_cells=base.target_cells, skills=base.skills, blocked_by=base.blocked_by,
-            status=(FrontierTaskStatus.RUNNING if record['id'] in meta['claimed_tasks'] else
-                    FrontierTaskStatus.BLOCKED if base.blocked_by else FrontierTaskStatus.PENDING),
-            priority=.3, created_by='citation-expansion', planner='bounded-bfs',
-            task_prompt=record['url'])
-        state.frontier.add(task)
+            state.frontier.add(FrontierTask(**item['task'], status=status,
+                blocked_by=item['blocked_reasons']))
     return state
 
 
 def persist(path, meta):
-    meta['pending_attribution'] = [
-        {'report_id': rid, 'candidate_index': index, 'case_id': c['case_id'], 'field': c['field']}
-        for rid, entry in meta['grounding'].items() for index, c in enumerate(entry['report']['validated_candidates'])
-        if find_decision(meta, 'attributions', rid, index) is None]
     state = project(meta)  # validate before committing any facts
     write_json(WorkspaceLayout(path).adapter, meta)
     write_json(WorkspaceLayout(path).schema, meta['schema'])
@@ -275,7 +196,7 @@ def prepare(path, batch=None, case_ids=None, config_dir=SKILL_ROOT / 'config'):
             'prepared_at': now(), 'research_started': False, 'config': config, 'schema': schema,
             'case_ids': case_ids, 'source_batch_run_id': batch.get('run_id'),
             'source_batch_sha256': digest(batch) if batch else None,
-            'legacy_values': legacy_values(batch, config), 'grounding': {}, 'attributions': [], 'reviews': [], 'attribution_checks': [], 'claimed_tasks': []}
+            'legacy_values': legacy_values(batch, config), 'grounding': {}, 'attributions': [], 'reviews': [], 'attribution_checks': [], 'claimed_tasks': {}}
     project(meta)
     path.mkdir(parents=True, exist_ok=False)
     workspace = WorkspaceManager(WorkspaceLayout(path).socm.parent, WorkspaceLayout(path).socm.name); workspace.create()
@@ -318,7 +239,7 @@ def summary(state):
             'ready_tasks': sum(t.status == FrontierTaskStatus.PENDING for t in state.frontier.questions),
             'blocked_tasks': sum(t.status == FrontierTaskStatus.BLOCKED for t in state.frontier.questions),
             'running_tasks': sum(t.status == FrontierTaskStatus.RUNNING for t in state.frontier.questions),
-            'failure_patterns': len(state.strategy_log.patterns), 'stop_reason': None}
+            'stop_reason': None}
 
 
 def ground(path, request):
@@ -457,7 +378,9 @@ def record_gap(path, gap):
             raise ValueError('Unreachable cells require access/query attempt records')
         if state.coverage_map.cells[cell_id].status == CellStatus.FILLED:
             raise ValueError('Cannot hide reviewed evidence by marking a gap')
-        meta.setdefault('gaps', {})[cell_id] = {**gap, 'recorded_at': now()}
+        recorded = {k: v for k, v in gap.items() if k != 'status'}
+        recorded.update(investigate=gap['status'] != 'hard_cell', recorded_at=now())
+        meta.setdefault('gaps', {})[cell_id] = recorded
         meta.setdefault('gap_history', []).append(meta['gaps'][cell_id])
         return summary(persist(path, meta))
 
@@ -480,12 +403,14 @@ def add_citation_results(path, node_id, results):
             raise ValueError('Citation expansion requires an opened depth-zero parent')
         tasks = meta.setdefault('citation_tasks', {})
         existing = [t for t in tasks.values() if t['parent_node_id'] == node_id]
-        capacity = min(5 - len(existing), MAX_FRONTIER_CAP - len(state.frontier.questions))
-        bases = [t for t in state.frontier.questions if t.kind == 'search'
-                 and t.target_cells and t.target_cells[0].split('/', 1)[1].split('.', 1)[0] == node.entity]
+        from online_policy import action_plan
+        proposals = action_plan(meta, state)['actions']
+        capacity = min(5 - len(existing), MAX_FRONTIER_CAP - len(proposals))
+        bases = [item['task'] for item in proposals if item['task'].get('kind', 'search') == 'search'
+                 and item['task']['target_cells'][0].split('/', 1)[1].split('.', 1)[0] == node.entity]
         if not bases or capacity <= 0:
             return []
-        base = max(bases, key=lambda t: t.priority)
+        base = max(bases, key=lambda t: t['priority'])
         seen = {identity(r['url']) for r in sources.values()}
         seen.update(identity(h['url']) for r in meta.get('online', {}).get('searches', {}).values()
                     for h in r.get('results', []))
@@ -499,7 +424,7 @@ def add_citation_results(path, node_id, results):
             public_url(hit['url'])
             task_id = 'cite_' + digest([node.entity, sorted(names)])[:20]
             record = {**hit, 'id': task_id, 'aliases': sorted(names), 'case_id': node.entity,
-                      'base_task_id': base.id, 'base_task': base.model_dump(), 'parent_node_id': node_id, 'depth': 1,
+                      'base_task_id': base['id'], 'base_task': base, 'parent_node_id': node_id, 'depth': 1,
                       'status': 'pending', 'created_at': now()}
             tasks[task_id] = record
             added.append(record)
@@ -545,16 +470,17 @@ def main():
                 meta['schema'] = generate(ids, meta['config']); meta['case_ids'] = ids
                 output = summary(persist(path, meta))
             elif args.command == 'release-task':
-                if args.task_id not in meta['claimed_tasks'] or not args.reason.strip():
+                if args.task_id not in task_claims(meta) or not args.reason.strip():
                     raise ValueError('Known claimed task and retry reason required')
-                meta['claimed_tasks'].remove(args.task_id)
+                release_claim(meta, args.task_id)
                 meta.setdefault('task_releases', []).append({'id': args.task_id, 'reason': args.reason, 'at': now()})
                 output = summary(persist(path, meta))
             elif args.command == 'next-task':
-                task = state.frontier.next()
+                from online_policy import action_plan
+                task = next(iter(action_plan(meta, state)['executable_actions']), None)
                 if task:
-                    meta['claimed_tasks'].append(task.id); persist(path, meta)
-                output = task.model_dump() if task else {'task': None, 'stop_reason': None}
+                    claim_task(meta, task['id'], 'manual'); persist(path, meta)
+                output = task if task else {'task': None, 'stop_reason': None}
             elif args.command == 'repair': output = summary(persist(path, meta))
             else: output = summary(state)
     print(json.dumps(output, ensure_ascii=False, indent=2))

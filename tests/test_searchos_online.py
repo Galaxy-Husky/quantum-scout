@@ -275,7 +275,7 @@ class OnlineTests(unittest.TestCase):
         self.assertEqual(result['stop_reason'], 'budget_exhausted')
         self.assertEqual(result['status'], 'incomplete')
         self.assertFalse(result['claims_global_exhaustion'])
-        self.assertEqual(load(self.path)['claimed_tasks'], [])
+        self.assertFalse(load(self.path)['claimed_tasks'])
 
     def test_quote_not_found_never_reaches_judge_or_graph(self):
         self.candidate['quote'] = 'Fabricated quote.'
@@ -290,7 +290,7 @@ class OnlineTests(unittest.TestCase):
         result, _ = self.run_fixture()
         self.assertEqual(result['coverage']['filled'], 0)
         self.assertEqual(result['coverage']['evidence_nodes'], 0)
-        self.assertGreater(result['coverage']['failure_patterns'], 0)
+        self.assertTrue(any(r['verdict'] == 'semantic_mismatch' for r in load(self.path)['reviews']))
 
     def test_abstention_leaves_uncertain_and_failure_memory(self):
         self.judgment['judgments'][0]['verdict'] = 'abstain'
@@ -318,7 +318,8 @@ class OnlineTests(unittest.TestCase):
         self.assertEqual(search['status'], 'failed')
         self.assertEqual(search['attempts'], 1)
         self.assertEqual(search.get('previous_attempts', []), [])
-        self.assertGreater(second['coverage']['failure_patterns'], 0)
+        self.assertTrue(any(e['kind'] == 'failure' and e.get('failure_type') == 'search_failed'
+                            for e in load(self.path)['online']['events']))
         self.assertNotEqual(second['stop_reason'], 'diminishing_returns')
 
     def test_model_error_releases_claim_and_does_not_report_exhaustion(self):
@@ -389,7 +390,8 @@ class OnlineTests(unittest.TestCase):
         result, models = self.run_fixture()
         self.assertEqual(result['coverage']['filled'], 0)
         self.assertFalse(models['judge'].calls)
-        self.assertGreater(result['coverage']['failure_patterns'], 0)
+        self.assertTrue(any(e['kind'] == 'failure' and e.get('failure_type') == 'invalid_location'
+                            for e in load(self.path)['online']['events']))
 
     def test_one_search_result_set_is_cached_on_resume(self):
         self.config.update(results_per_page=1)
@@ -461,8 +463,10 @@ class OnlineTests(unittest.TestCase):
         self.run_fixture(extraction={'candidates': [], 'missing': {}})
         meta = load(self.path)
         task_id = project(meta).frontier.next().id
-        meta['claimed_tasks'].append(task_id)
-        meta['online']['invocations'][-1].update(status='running', active_task=task_id)
+        from searchos_adapter import claim_task
+        owner = meta['online']['invocations'][-1]['started_at']
+        claim_task(meta, task_id, owner)
+        meta['online']['invocations'][-1].update(status='running')
         persist(self.path, meta)
         result, _ = self.run_fixture(extraction={'candidates': [], 'missing': {}})
         self.assertEqual(load(self.path)['online']['invocations'][0]['operational_cause'], 'process_interrupted')

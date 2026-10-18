@@ -59,7 +59,7 @@ DOI、arXiv、规范化 URL 记录别名，版本号单独保留；同一文档�
 缺证对象的 quote/location 可 NULL，reason 说明缺什么，不能伪造“未提及”的引用；已证实为 false 的准入也需证据。缺证及单来源限制见[禁止推断补证](#禁止推断补证)。
 
 在线 Candidate 的 confidence 仅允许 low / medium；high 是契约违规。两档均可进入双审，
-该标签不构成 filled 的拦截门槛；填充仍须接地、有效绑定、双审、来源资格及无冲突等条件全部成立。
+该标签不构成 filled 的拦截门槛；填充仍须接地、有效绑定、双审、来源资格成立，且字段可形成结论；多候选待汇总不计入填充。
 置信度供审计筛选参考，不表示经过校准的概率或已实现自动分层抽样。
 
 ## 定量与字段来源
@@ -102,7 +102,7 @@ production 仍须通过原有字段/单位/两来源检查，字符串门不替�
 case_description 应明确案例身份，不能只提供无定义的内部编号。上下文不足时保留不确定，不靠文献深度猜测。
 
 归属通过后，用独立请求核查语义支持、位置及该字段规则，特别检查否定、条件、威胁模型和组件/整体边界。
-不同 reviewer ID 或同模型的两次调用不保证误差独立，FILLED 不等同语义正确。调用、缓存与状态见 [执行流程](workflow.md)。
+归属与语义是两项不同职责，不是对同一命题的两票表决；不同reviewer ID或分开调用不保证误差独立。supported/FILLED表示绑定的评审记录满足现行接受契约，不是代码已证明语义真实；反证发现的完整性仍是模型判断的能力边界，不能靠结构守卫补成保证。此边界不随模型品牌改变。调用、缓存与状态见[执行流程](workflow.md)。
 
 ## 准入与评分
 
@@ -120,7 +120,7 @@ review_contract=4；每项语义判断包含counter_evidence_search：segments_s
 每个true必须对应非空举证列表，false只能空列表；每项举证/矛盾含location及非空连续原文证据quote，location在实际提供并声明搜索的分段内。summary为1–2000字符且非空白，说明发现及其对结论的影响；不声称搜索未提供全文。
 发现却无法合规举证属于counter_evidence_unsubstantiated，不能改报false或用abstain绕过；语义评审结构或接地失败不追加格式纠错，保留原响应与实际长度，以error/contract_violation停止。
 suppressed_findings仅防同candidate_index三个flag的true→false，不比较矛盾列表/summary，不发现首次遗漏；counter_search_valid不能补足这些缺口。字段合规不证明反证搜索充分。
-归属/语义分别保存并绑定同report_id/candidate_index、case_id、value_text、location、source_sha256；review_policy.supported_pair统一校验，不另设宽松守卫。FILLED还须来源opened、无冲突、归属attributed、语义supported、location_checked=true、domain_rule_met=met。
+归属/语义分别保存并绑定同report_id/candidate_index、case_id、value_text、location、source_sha256；review_policy.supported_pair统一校验，不另设宽松守卫。FILLED还须来源opened、该字段有唯一通过候选（多候选汇总尚未实现）、归属attributed、语义supported、location_checked=true、domain_rule_met=met。
 
 ### 原文证据绑定
 
@@ -140,7 +140,7 @@ ContextGem发送前仅将句子视图空白归一为空格，保存正文和接�
 
 coverage_policy按同案例同Track重算链；self_audit从原始grounding/attributions/reviews、正文哈希与原始请求重算，不接受witness快照当真值，失败保留具体missing_fields/原因。
 人工记录只能由真人提供；agent自检不计。最低样本数min(eligible,max(3,ceil(eligible*10%)))，实际从配置快照取值；覆盖<5%严重提示，仅作质量标签，不阻塞覆盖停止。零候选覆盖/精确率unknown，候选不足取全部。
-human_audit_status保留not_applicable/unverified/partial/verified/rejected，链外人工判错也令案例rejected。历史快照与当前标签的字段绑定见[批次契约](batch-schema.md#案例覆盖与在线导出)；精确率只针对已抽样候选，不能外推总体。
+human_audit_status保留not_applicable/unverified/partial/verified/rejected；verified仅表示已记录的人工归属抽查达到样本要求，不表示全部字段语义已验证。链外人工判错也令案例rejected。历史快照与当前标签的字段绑定见[批次契约](batch-schema.md#案例覆盖与在线导出)；精确率只针对已抽样候选，不能外推总体。
 成本按call_id关联开始/响应，ContextGem内部、纠错和失败尝试均计调用；usage或USD价格无回执保留unknown，不补零、不自行估价。记录实际模型和白名单参数。
 
-人工导出逐项展示结论、来源/版本/位置、原文偏移及同一完整证据，并显示条件/边界的证据与理由；长文仅界面折叠，展开不丢字。不新建短引字段或证据账本。历史workspace不重写判断；执行基线改变后使用新workspace。
+人工导出逐项展示结论、来源/版本/位置、原文偏移及同一完整证据，并显示评审原始总结、空发现列表及条件/边界证据与理由；不从总结自动补造发现或判错。长文仅界面折叠，展开不丢字。不新建短引字段或证据账本。历史workspace不重写判断；执行基线改变后使用新workspace。

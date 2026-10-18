@@ -5,7 +5,7 @@ description: 搜索驱动的量子应用证据发现；检索论文、专利、�
 
 # Quantum Scout
 
-推进真实搜索链路；先修阻塞，再在授权预算内验证，不以文档或离线测试通过代替真实结果。
+推进真实搜索链路；维护时先明确职责与规则性质，避免逐例叠加门控。具体规则见[职责与分层](references/workflow.md#代码模型与持久化的职责)，不新增三层运行引擎；离线通过不代表真实结果。
 
 ## 按需读取
 
@@ -21,7 +21,7 @@ description: 搜索驱动的量子应用证据发现；检索论文、专利、�
 
 已知 PDF/HTML URL 直接 `open-source`，不先搜索；产物放项目 `artifacts/quantum-scout/`，用 `--project-root` 指定项目。默认 calibration；production、阶段转换与正式复盘须明确授权。
 
-## 硬边界
+## 执行边界
 
 - 整个 skill 的执行与修改均遵守[节约规则](references/workflow.md#代码模型与持久化的职责)，减少调用和输入；按需读取，不预加载全部参考材料。
 

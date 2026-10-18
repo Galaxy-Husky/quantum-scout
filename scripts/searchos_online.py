@@ -8,6 +8,7 @@ Evidence-sufficient stopping is deliberately not implemented here.
 import argparse
 import asyncio
 from contextlib import contextmanager
+from dataclasses import dataclass
 import fcntl
 import importlib.util
 import json
@@ -27,6 +28,19 @@ from contextgem_extractor import ContractViolation
 import searchos_adapter as adapter
 from searchos_network import make_provider, open_source
 from searchos_project import ProjectLayout, WorkspaceLayout, save, save_online_validation
+
+
+@dataclass(frozen=True)
+class StopRequest:
+    """Host-declared provenance carried by asyncio.Task.cancel(msg), not inferred intent."""
+    initiator: Literal['user', 'agent', 'system']
+    reason: str
+    request_ref: str
+
+    def __post_init__(self):
+        if (self.initiator not in {'user', 'agent', 'system'} or
+                any(not isinstance(v, str) or not v.strip() for v in (self.reason, self.request_ref))):
+            raise ValueError('StopRequest requires an explicit initiator, reason and request reference')
 
 
 def context_window(segments, location, radius=1):
@@ -513,6 +527,8 @@ class OnlineRunner:
         self.pending_stage = None
         self.call_scope = {}
         self.expected_title = None
+        self.known_url = None
+        self.case_id = None
         self.citation_throttles = {}
         self.last_model_calls = {}
         self.citation_clients = {}
@@ -558,10 +574,7 @@ class OnlineRunner:
         with adapter.locked(self.path):
             meta = adapter.load(self.path)
             meta['online']['events'].append(event)
-            if kind == 'failure':  # Failure patterns affect scheduling; other events are audit-only.
-                adapter.persist(self.path, meta)
-            else:
-                adapter.write_json(WorkspaceLayout(self.path).adapter, meta)
+            adapter.write_json(WorkspaceLayout(self.path).adapter, meta)
 
     def remaining(self):
         seconds = self.deadline - time.monotonic()
@@ -684,10 +697,8 @@ class OnlineRunner:
 
     @staticmethod
     def search_paused(provider, online):
-        return any(r['provider'] == provider and
-                   (r.get('status_code') == 429 or r.get('error_type') in
-                    {'TimeoutError', 'ReadTimeout', 'ConnectTimeout', 'WriteTimeout', 'PoolTimeout'})
-                   for r in online['searches'].values())
+        from online_policy import search_paused
+        return search_paused(provider, online)
 
     async def search(self, provider, query, task):
         # SearchOS returns one bounded result set; page=0 preserves receipt shape.
@@ -1028,9 +1039,11 @@ class OnlineRunner:
             'Summary and verdict reasons must not be the only record of an identified condition. '
             'For each finding, the selected full evidence must support the claimed qualifier; surrounding '
             'context must not substitute unrelated or missing evidence. If a finding needs separate sentences, report separate supported findings, not a stitched quote. If no selected evidence supports it, use null and explain. '
-            'In each contradiction reason identify both incompatible propositions and their shared scope. '
-            'Do not label a compatible observation as contradiction merely because it does not establish '
-            'a universal criterion. Missing support requires semantic_mismatch or abstain, not invented opposition. '
+            'In each contradiction reason align candidate/source propositions by system, round/conditions, '
+            'quantifier and metric/units; explain why both cannot hold. Do not strengthen ambiguous scope '
+            'into a universal claim. For the same measured quantities, K>100R supports K>R; omitting that '
+            'detail is not contradiction. A measured result alone need not establish a universal criterion: '
+            'missing support requires semantic_mismatch or abstain, not invented opposition. '
             'Before returning, reconcile summary and verdict with the lists; retain actual findings rather '
             'than deleting them to make a supported verdict consistent. '
             'Describe search terms and findings in summary. Do not claim a full-paper search. '
@@ -1074,15 +1087,26 @@ class OnlineRunner:
         self.event('self_audit', **result)
         return result
 
+    def scheduling_decision(self, meta, *, audit=False):
+        from online_policy import decide
+        from audit_policy import self_audit
+        budget_cause = ('wall_clock_limit' if time.monotonic() >= self.deadline else
+                        'model_call_limit' if self.calls >= self.config['max_model_calls'] else None)
+        def check(cid, tid):
+            result = self_audit(meta, cid, tid)
+            self.event('self_audit', **result)
+            return result
+        return decide(meta, adapter.project(meta, with_tasks=False),
+                      known_url=self.known_url, case_id=self.case_id,
+                      audit=check if audit else None, budget_cause=budget_cause)
+
     def checked_stop_decision(self):
-        from online_policy import stop_decision
-        meta = adapter.load(self.path)
-        trace = {}
-        decision = stop_decision(meta, adapter.project(meta), audit=self.self_audit, trace=trace)
-        self.event('stop_decision', decision=decision[0] if decision else None,
-                   reason=decision[0] if decision else trace['reason'],
-                   evidence=decision[1] if decision else trace)
-        return decision
+        decision = self.scheduling_decision(adapter.load(self.path), audit=True)
+        stop = decision['terminal_reason']
+        self.event('stop_decision', decision=stop,
+                   reason=stop or decision['trace'].get('reason', 'pending_work'),
+                   evidence=decision['stop_evidence'] if stop else decision['trace'])
+        return (stop, decision['stop_evidence']) if stop else None
 
     def start_assessment(self, task, plan):
         cursor = plan['cursor']
@@ -1098,45 +1122,19 @@ class OnlineRunner:
         self.call_scope = {k: context[k] for k in ('case_id', 'table_id')}
         online = adapter.load(self.path)['online']
         from citation_backends import identity as discovery_identity
-        def cached_url(url):
-            # Discovery aliases share an existing record; explicit versioned opens
-            # retain their exact URL and never silently substitute another version.
-            if known_url:
-                return url
-            records = adapter.load(self.path)['online']['sources']
-            if digest(url) in records:
-                return url
-            canonical = discovery_identity(url)
-            return next((r['url'] for r in records.values()
-                         if discovery_identity(r['url']) == canonical), url)
-
+        from online_policy import source_action, task_operations
         def pending(url):
-            from online_policy import retryable_source
-            snapshot = adapter.load(self.path)['online']
-            stored = snapshot['sources'].get(digest(cached_url(url)))
-            if stored and stored['status'] != 'opened' and not retryable_source(stored, snapshot):
-                return False
-            if not stored or not stored.get('source'):
-                return True
-            from online_policy import resolve_assessment
-            plan = resolve_assessment(snapshot, task, stored['source'])
-            if plan['cursor'] == 'done' and plan['assessment_id'] is None:
+            item = source_action(adapter.load(self.path)['online'], task, url, exact=bool(known_url))
+            plan = item['assessment']
+            if plan and plan['cursor'] == 'done' and plan['assessment_id'] is None:
                 self.start_assessment(task, plan)
-            return plan['cursor'] != 'done'
+            return not item['blocked_reasons']
         citation = adapter.load(self.path).get('citation_tasks', {}).get(task['id'])
-        hits = [hit for record in online['searches'].values()
-                if set(record['target_cells']) & set(task['target_cells'])
-                for hit in record.get('results', []) if pending(hit['url'])]
-        if citation:
-            hits = [{'url': citation['url']}]
-        if not citation:
-            hits.extend({'url': r['url']} for r in online['sources'].values()
-                        if r['status'] == 'opened' and pending(r['url']))
-        if known_url:
-            hits = [{'url': known_url}] if pending(known_url) else []
+        operations = task_operations(adapter.load(self.path), task, known_url)
+        hits = operations['hits']
         new_successes = 0
         # Drain discovered source backlog before spending calls on new queries.
-        for provider in ([] if hits or citation or known_url else self.config['providers']):
+        for provider in operations['providers']:
             if self.search_paused(provider, online):
                 continue
             seeds = self.config['cases'][context['case_id']].get('queries', {}).get(provider, [])
@@ -1164,7 +1162,7 @@ class OnlineRunner:
                 break
             if len(processed) >= self.config['max_sources_per_round']:
                 break
-            url = cached_url(hit['url'])
+            url = source_action(adapter.load(self.path)['online'], task, hit['url'], exact=bool(known_url))['url']
             discovered = discovery_identity(url)
             if discovered in processed or not pending(url):
                 continue
@@ -1276,6 +1274,7 @@ class OnlineRunner:
         if expected_title is not None and (not known_url or not expected_title.strip() or len(expected_title) > 4000):
             raise ValueError('expected_title requires a known URL and a nonblank title of at most 4000 characters')
         self.expected_title = expected_title
+        self.known_url, self.case_id = known_url, case_id
         with single_runner(self.path):
             meta = adapter.load(self.path)
             if known_url and case_id not in meta['case_ids']:
@@ -1294,11 +1293,14 @@ class OnlineRunner:
                 # The nonblocking runner lock proves a previous owner exited.
                 for previous in m['online']['invocations']:
                     if previous['status'] == 'running':
-                        owned = previous.get('active_task')
-                        if owned in m['claimed_tasks']:
-                            m['claimed_tasks'].remove(owned)
+                        for task_id, claim in list(adapter.task_claims(m).items()):
+                            if claim['owner'] == previous['started_at']:
+                                adapter.release_claim(m, task_id)
                         previous.update(status='incomplete', stop_reason='error',
-                                        operational_cause='process_interrupted', ended_at=adapter.now())
+                                        operational_cause='process_interrupted', ended_at=adapter.now(),
+                                        stop_evidence={'error_kind': 'execution_interrupted',
+                                            'error_type': 'ProcessInterrupted', 'initiator': 'unknown',
+                                            'reason': None, 'request_ref': None})
                 for collection in ('searches', 'sources', 'citation_expansions'):
                     for record_id, record in m['online'].get(collection, {}).items():
                         if record['status'] == 'started':
@@ -1310,6 +1312,7 @@ class OnlineRunner:
             self.update(recover)
             self.update(lambda m: m.update(research_started=True))
             invocation = {'started_at': adapter.now(), 'status': 'running', 'stop_reason': None,
+                          'operation_scope': {'url': known_url, 'case_id': case_id},
                           'runtime_configuration': _RUNTIME_CONFIGURATION,
                           'document_baseline': current_baseline['document_baseline']}
             self.update(lambda m: m['online']['invocations'].append(invocation))
@@ -1332,51 +1335,27 @@ class OnlineRunner:
                     decision = self.checked_stop_decision()
                     if decision:
                         stop, stop_evidence = decision
-                        cause = stop
+                        cause = stop_evidence.get('error_kind', stop)
+                        if known_url and stop == 'operational_pool_exhausted':
+                            cause = 'fixed_source_assessed_with_gaps'
                         break
-                    def has_executable_action(m, task):
-                        if not known_url:
-                            return True
-                        from online_policy import resolve_assessment, retryable_source
-                        snapshot = m['online']
-                        stored = snapshot['sources'].get(digest(known_url))
-                        if stored and stored['status'] != 'opened':
-                            return retryable_source(stored, snapshot)
-                        if not stored or not stored.get('source'):
-                            return True
-                        plan = resolve_assessment(snapshot, task.model_dump(), stored['source'])
-                        return plan['cursor'] != 'done'
-
                     def claim(m):
-                        state = adapter.project(m)
-                        ready = [t for t in state.frontier.questions if t.status.value == 'pending'
-                                 and (not known_url or (t.id not in m.get('citation_tasks', {})
-                                      and any(c.split('/', 1)[1].split('.', 1)[0] == case_id
-                                              for c in t.target_cells)))
-                                 and has_executable_action(m, t)]
-                        if not ready:
-                            return None
-                        attempts = m['online']['attempted_tasks']
-                        preferred = self.config.get('preferred_track')
-                        task = min(ready, key=lambda t: (
-                            0 if preferred and t.table_id.rsplit('_', 1)[0] == preferred else 1,
-                            attempts.count(t.id), -t.priority))
-                        m['claimed_tasks'].append(task.id)
-                        attempts.append(task.id)
-                        m['online']['invocations'][-1]['active_task'] = task.id
-                        return task.model_dump()
-                    active = self.update(claim)
+                        decision = self.scheduling_decision(m)
+                        if decision['terminal_reason'] or not decision['executable_actions']:
+                            return None, decision
+                        task = decision['executable_actions'][0]
+                        adapter.claim_task(m, task['id'], invocation['started_at'])
+                        m['online']['attempted_tasks'].append(task['id'])
+                        return task, decision
+                    active, selection = self.update(claim)
                     if active is None:
-                        if known_url:
-                            from online_policy import fixed_source_stop_evidence
-                            snapshot = adapter.load(self.path)
-                            evidence = fixed_source_stop_evidence(
-                                snapshot, adapter.project(snapshot), known_url, case_id)
-                            if evidence:
-                                cause, stop = 'fixed_source_assessed_with_gaps', 'operational_pool_exhausted'
-                                stop_evidence = evidence
-                                break
-                        cause, stop = 'tasks_claimed_or_sources_pending', 'budget_exhausted'; break
+                        stop = selection['terminal_reason'] or 'error'
+                        stop_evidence = selection['stop_evidence'] or {
+                            'error_kind': 'no_executable_action', 'blocked_reasons': selection['blocked_reasons']}
+                        cause = stop_evidence.get('error_kind', stop)
+                        if known_url and stop == 'operational_pool_exhausted':
+                            cause = 'fixed_source_assessed_with_gaps'
+                        break
                     before = adapter.summary(adapter.project(adapter.load(self.path)))['filled']
                     outcome = await self.run_task(active, known_url) if known_url else await self.run_task(active)
                     rounds += 1
@@ -1384,19 +1363,14 @@ class OnlineRunner:
                     self.event('round_completed', round=rounds, task_id=active['id'], filled_before=before,
                                filled_after=after, calls_this_round=round_usage(),
                                calls_cumulative=dict(self.category_calls), **outcome)
-                    self.update(lambda m: m['claimed_tasks'].remove(active['id']))
+                    self.update(lambda m: adapter.release_claim(m, active['id']))
                     active = None
-                    if known_url:
-                        stored = adapter.load(self.path)['online']['sources'].get(digest(known_url), {})
-                        if stored.get('status') == 'failed':
-                            cause, stop = 'source_unavailable', 'error'
-                            stop_evidence = {'error_kind': cause, 'source_url': known_url,
-                                             'error_type': stored.get('error_type', 'Unknown')}
-                            break
                     decision = self.checked_stop_decision()
                     if decision:
                         stop, stop_evidence = decision
-                        cause = stop
+                        cause = stop_evidence.get('error_kind', stop)
+                        if known_url and stop == 'operational_pool_exhausted':
+                            cause = 'fixed_source_assessed_with_gaps'
                         break
             except BudgetEnd as exc:
                 cause = str(exc)
@@ -1405,10 +1379,19 @@ class OnlineRunner:
                 stop_evidence = {'error_kind': cause, 'reason': str(exc)}
                 self.event('failure', failure_type=cause, reason=str(exc),
                            target_cells=active['target_cells'] if active else [])
-            except (Exception, KeyboardInterrupt, asyncio.CancelledError) as exc:
-                stop = 'user_aborted' if isinstance(exc, (KeyboardInterrupt, asyncio.CancelledError)) else 'error'
+            except (KeyboardInterrupt, asyncio.CancelledError) as exc:
+                request = exc.args[0] if exc.args and isinstance(exc.args[0], StopRequest) else None
+                stop = 'user_aborted' if request and request.initiator == 'user' else 'error'
                 cause = type(exc).__name__
-                self.event('failure', failure_type='execution_failed', error_type=type(exc).__name__,
+                stop_evidence = {'error_kind': 'user_cancelled' if stop == 'user_aborted' else 'execution_interrupted',
+                    'error_type': cause, 'initiator': request.initiator if request else 'unknown',
+                    'reason': request.reason if request else None,
+                    'request_ref': request.request_ref if request else None}
+                self.event('failure', failure_type='execution_interrupted', **stop_evidence,
+                           target_cells=active['target_cells'] if active else [])
+            except Exception as exc:
+                stop, cause = 'error', type(exc).__name__
+                self.event('failure', failure_type='execution_failed', error_type=cause,
                            target_cells=active['target_cells'] if active else [])
             finally:
                 if active:
@@ -1424,7 +1407,7 @@ class OnlineRunner:
                                pending_stage=pending_stage, pending_kind=pending_kind,
                                stop_reason=stop, cause=cause, calls_this_round=round_usage(),
                                calls_cumulative=dict(self.category_calls))
-                    self.update(lambda m: m['claimed_tasks'].remove(active['id']))
+                    self.update(lambda m: adapter.release_claim(m, active['id']))
                 if cause == 'analysis_limit_reached':
                     stop = cause
                 from validate_batch import SUCCESS_STOPS

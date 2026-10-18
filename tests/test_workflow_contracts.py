@@ -35,7 +35,7 @@ class WorkflowContractTests(unittest.TestCase):
     extractor = fixtures.OnlineTests.extractor
     run_fixture = fixtures.OnlineTests.run_fixture
 
-    def test_audit_event_persists_without_view_rebuild_and_failure_still_projects(self):
+    def test_diagnostic_events_persist_without_rebuilding_views(self):
         self.run_fixture()
         runner = OnlineRunner(self.path, self.config,
             models={'extraction': fixtures.Model(self.extraction), 'judge': fixtures.Model(self.judgment)},
@@ -46,9 +46,10 @@ class WorkflowContractTests(unittest.TestCase):
             runner.event('model_response', call_id='offline', content='raw response')
         self.assertEqual(adapter.load(self.path)['online']['events'][-1]['content'], 'raw response')
         self.assertEqual({p: p.read_bytes() for p in views}, views)
-        runner.event('failure', failure_type='source_unavailable', error_type='SyntheticFailure')
-        self.assertTrue(any(p.read_bytes() != data for p, data in views.items()))
-        self.assertIn('source_unavailable', layout.socm.joinpath('search_state.json').read_text())
+        with patch.object(adapter, 'project', side_effect=AssertionError('Diagnostic event rebuilt views')):
+            runner.event('failure', failure_type='source_unavailable', error_type='SyntheticFailure')
+        self.assertEqual({p: p.read_bytes() for p in views}, views)
+        self.assertEqual(adapter.load(self.path)['online']['events'][-1]['error_type'], 'SyntheticFailure')
 
     def test_export_uses_facts_without_repairing_stale_socm_views(self):
         from export_batch import write_export
@@ -221,7 +222,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(batch['stop_reason'], result['stop_reason'])
         opened = {r['source']['source_id'] for r in raw['online']['sources'].values() if r['status'] == 'opened'}
         self.assertEqual(batch['counts']['opened_sources'], len(opened))
-        self.assertEqual(raw['claimed_tasks'], [])
+        self.assertFalse(raw['claimed_tasks'])
         return raw, batch
 
     def test_three_sources_progress_through_real_runner_to_case_coverage_stop(self):

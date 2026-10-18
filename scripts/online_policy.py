@@ -97,9 +97,179 @@ def current_assessments(online):
     return current
 
 
-def stop_decision(meta, state, audit=None, trace=None):
+def task_requirements(meta, state):
+    """Domain prerequisites only; no Frontier state is used as an input."""
+    from schema_generator import digest, TRACK_SKILLS
+    from searchos_adapter import key
+    cells = state.coverage_map.cells
+
+    def prerequisites(cid, table):
+        if table == 'problem_definition':
+            return []
+        track, kind = table.rsplit('_', 1)
+        if kind == 'admission':
+            complete = all(cells[key('problem_definition', cid, f)].status.value == 'filled'
+                or meta.get('gaps', {}).get(key('problem_definition', cid, f), {}).get('reason')
+                or (meta['legacy_values'].get(key('problem_definition', cid, f), {}).get('value') is None
+                    and meta['legacy_values'].get(key('problem_definition', cid, f), {}).get('reason'))
+                for f in meta['config']['fields'])
+            return [] if complete else ['definition_incomplete']
+        admission = [cells[key(track + '_admission', cid, c)]
+                     for c in meta['config']['tracks'][track]['admission_criteria']]
+        if any(c.status.value == 'filled' and c.display_hint == 'false' for c in admission):
+            return ['admission_rejected']
+        return [] if all(c.status.value == 'filled' and c.display_hint == 'true' for c in admission) else ['admission_incomplete']
+
+    def scoped_targets(targets):
+        pending = [k for k in targets if cells[k].status.value != 'filled']
+        available = [k for k in pending if
+            meta.get('gaps', {}).get(k, {}).get('investigate',
+                meta.get('gaps', {}).get(k, {}).get('status') != 'hard_cell')
+            and len(cells[k].supporting_evidence_ids) <= 1]
+        reasons = []
+        if pending and not available:
+            if any(len(cells[k].supporting_evidence_ids) > 1 for k in pending):
+                reasons.append('aggregation_pending')
+            if any(not meta.get('gaps', {}).get(k, {}).get('investigate',
+                meta.get('gaps', {}).get(k, {}).get('status') != 'hard_cell') for k in pending):
+                reasons.append('outside_investigation_scope')
+        return available or pending, reasons
+
+    result = []
+    for cid in meta['case_ids']:
+        for table in meta['schema']['tables']:
+            tid = table['table_id']
+            targets, scope_reasons = scoped_targets([key(tid, cid, f) for f in table['attributes']])
+            if not targets:
+                continue
+            reasons = prerequisites(cid, tid) + scope_reasons
+            if 'admission_rejected' in reasons:
+                continue
+            skills, priority = ([], .9) if tid == 'problem_definition' else (
+                ([TRACK_SKILLS[tid.rsplit('_', 1)[0]]], .8) if tid.endswith('_admission') else (['quantum-scoring'], .5))
+            result.append({'task': {'id': 'qs_' + digest([cid, tid])[:20],
+                'question': f'{cid}: fill and independently verify {tid}', 'table_id': tid,
+                'target_cells': targets, 'skills': skills,
+                'priority': min(1., priority + .2 * sum(cells[k].status.value == 'uncertain' for k in targets) / len(targets)),
+                'created_by': 'quantum-scout', 'planner': 'coverage-heuristic',
+                'task_prompt': 'Do not treat quote matching or coverage as semantic verification.'},
+                'blocked_reasons': reasons})
+    for record in meta.get('citation_tasks', {}).values():
+        if record['status'] != 'pending':
+            continue
+        base = record['base_task']
+        targets, scope_reasons = scoped_targets(base['target_cells'])
+        if not targets:
+            continue
+        result.append({'task': {'id': record['id'], 'kind': 'explore', 'depth': 1,
+            'parent_id': record['parent_node_id'], 'question': 'Verify citation body: ' + record['url'],
+            'table_id': base['table_id'], 'target_cells': targets, 'skills': base['skills'],
+            'priority': .3, 'created_by': 'citation-expansion', 'planner': 'bounded-bfs',
+            'task_prompt': record['url']},
+            'blocked_reasons': prerequisites(record['case_id'], base['table_id']) + scope_reasons})
+    return result
+
+
+def search_paused(provider, online):
+    return any(r['provider'] == provider and
+        (r.get('status_code') == 429 or r.get('error_type') in
+         {'TimeoutError', 'ReadTimeout', 'ConnectTimeout', 'WriteTimeout', 'PoolTimeout'})
+        for r in online.get('searches', {}).values())
+
+
+def source_action(online, task, url, *, exact=False):
+    """Normalize source availability and progress, without mutating either."""
+    from schema_generator import digest
+    if not exact and digest(url) not in online.get('sources', {}):
+        canonical = identity(url)
+        url = next((r['url'] for r in online.get('sources', {}).values() if identity(r['url']) == canonical), url)
+    stored = online.get('sources', {}).get(digest(url))
+    if stored and stored['status'] != 'opened' and not retryable_source(stored, online):
+        return {'url': url, 'blocked_reasons': ['source_unavailable'], 'assessment': None}
+    plan = resolve_assessment(online, task, stored['source']) if stored and stored.get('source') else None
+    return {'url': url, 'blocked_reasons': ['source_assessed'] if plan and plan['cursor'] == 'done' else [],
+            'assessment': plan}
+
+
+def task_operations(meta, task, known_url=None):
+    """Concrete available sources/search services for one eligible domain task."""
+    online = meta['online']
+    citation = meta.get('citation_tasks', {}).get(task['id'])
+    if known_url or citation:
+        hits = [{'url': known_url or citation['url']}]
+    else:
+        hits = [hit for record in online.get('searches', {}).values()
+                if set(record['target_cells']) & set(task['target_cells']) for hit in record.get('results', [])]
+        hits += [{'url': r['url']} for r in online.get('sources', {}).values() if r['status'] == 'opened']
+    ready, unavailable, seen = [], [], set()
+    for hit in hits:
+        item = source_action(online, task, hit['url'], exact=bool(known_url))
+        canonical = identity(item['url'])
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        if item['blocked_reasons']:
+            unavailable.append(item)
+        else:
+            ready.append({**hit, 'url': item['url']})
+    providers = [] if ready or known_url or citation else [p for p in online.get('config', {}).get('providers', [])
+                                                          if not search_paused(p, online)]
+    reasons = [] if ready or providers else sorted({r for item in unavailable for r in item['blocked_reasons']})
+    if not ready and not providers and not reasons:
+        reasons = ['service_unavailable']
+    return {'hits': ready, 'providers': providers, 'blocked_reasons': reasons,
+            'unavailable_sources': unavailable}
+
+
+def action_plan(meta, state, known_url=None, case_id=None):
+    """Ephemeral normalized decisions. All displays/consumers use this same result."""
+    from searchos_adapter import task_claims
+    invocation = next(iter(reversed(meta.get('online', {}).get('invocations', []))), {})
+    scope = invocation.get('operation_scope', {})
+    if known_url is None and scope.get('url'):
+        known_url, case_id = scope['url'], scope['case_id']
+    actions = task_requirements(meta, state)
+    for item in actions:
+        task, reasons = item['task'], item['blocked_reasons']
+        if task['id'] in task_claims(meta):
+            reasons.append('task_claimed')
+        if known_url and (task['id'] in meta.get('citation_tasks', {}) or
+                task['target_cells'][0].split('/', 1)[1].split('.', 1)[0] != case_id):
+            reasons.append('outside_invocation_scope')
+        item['operations'] = {'hits': [], 'providers': [], 'unavailable_sources': []}
+        if 'online' in meta and 'outside_invocation_scope' not in reasons:
+            item['operations'] = task_operations(meta, task, known_url)
+            reasons.extend(item['operations']['blocked_reasons'])
+        item['blocked_reasons'] = list(dict.fromkeys(reasons))
+    ready = [item['task'] for item in actions if not item['blocked_reasons']]
+    online = meta.get('online', {})
+    preferred = online.get('config', {}).get('preferred_track')
+    attempts = online.get('attempted_tasks', [])
+    ready.sort(key=lambda t: (0 if preferred and t['table_id'].rsplit('_', 1)[0] == preferred else 1,
+                             attempts.count(t['id']), -t['priority']))
+    return {'scope': {'url': known_url, 'case_id': case_id},
+            'actions': actions, 'executable_actions': ready,
+            'blocked_reasons': sorted({r for item in actions for r in item['blocked_reasons']})}
+
+
+def decide(meta, state, *, known_url=None, case_id=None, audit=None, budget_cause=None):
+    plan = action_plan(meta, state, known_url, case_id)
+    trace = {}
+    terminal = stop_decision(meta, state, audit=audit, trace=trace, plan=plan,
+                             known_url=known_url, case_id=case_id)
+    if terminal is None and budget_cause:
+        terminal = ('budget_exhausted', {'budget_cause': budget_cause})
+        plan['blocked_reasons'] = sorted(set(plan['blocked_reasons']) | {'budget_exhausted'})
+    return {**plan, 'executable_actions': [] if terminal else plan['executable_actions'],
+            'terminal_reason': terminal[0] if terminal else None,
+            'stop_evidence': terminal[1] if terminal else {}, 'trace': trace}
+
+
+def stop_decision(meta, state, audit=None, trace=None, *, plan=None, known_url=None, case_id=None):
     trace = trace if trace is not None else {}
     trace.update(reason='pending_work')
+    plan = plan if plan is not None else action_plan(meta, state, known_url, case_id)
+    known_url, case_id = plan['scope']['url'], plan['scope']['case_id']
     config = meta['online']['config']
     sources = {r['source']['source_id'] for r in meta['online']['sources'].values() if r['status'] == 'opened'}
     cases = reviewed_cases(meta, state)
@@ -128,6 +298,18 @@ def stop_decision(meta, state, audit=None, trace=None):
         return 'case_coverage_complete', {**completions[0], 'case_completions': completions,
             'configured_case_ids': scope,
             'attribution_check_count': len(meta.get('attribution_checks', []))}
+    if known_url:
+        from schema_generator import digest
+        record = meta['online']['sources'].get(digest(known_url))
+        if record and record['status'] != 'opened' and not retryable_source(record, meta['online']):
+            return 'error', {'error_kind': 'source_unavailable', 'source_url': known_url,
+                             'error_type': record.get('error_type', 'Unknown')}
+        evidence = fixed_source_stop_evidence(meta, state, known_url, case_id, plan=plan)
+        if evidence:
+            return 'operational_pool_exhausted', evidence
+        if plan['executable_actions'] or 'task_claimed' in plan['blocked_reasons']:
+            return None
+        return 'error', {'error_kind': 'no_executable_action', 'blocked_reasons': plan['blocked_reasons']}
     tail = queries(meta)[-config['stall_rounds']:]
     online = meta['online']
     current = current_assessments(online).values() or online['assessments'].keys()
@@ -139,11 +321,14 @@ def stop_decision(meta, state, audit=None, trace=None):
         return 'diminishing_returns', {'basis': 'new_sources',
             'window_query_ids': [q['id'] for q in tail],
             'rationale': 'Last N distinct successful queries discovered no new sources; gaps remain.'}
-    tasks = state.frontier.questions
-    if any(t.status.value in {'pending', 'running'} for t in tasks) or source_backlog(meta) or search_backlog(meta):
+    if plan['executable_actions'] or 'task_claimed' in plan['blocked_reasons']:
         return None
-    actions = [{'id': t.id, 'status': 'blocked',
-                'reason': 'Unmet reviewed prerequisites: ' + ','.join(t.blocked_by)} for t in tasks]
+    if source_backlog(meta) or search_backlog(meta):
+        return 'error', {'error_kind': 'no_executable_action', 'blocked_reasons': plan['blocked_reasons'],
+                         'rationale': 'Remaining sources/queries are blocked, not exhausted.'}
+    actions = [{'id': item['task']['id'], 'status': 'blocked',
+                'reason': ','.join(item['blocked_reasons']), 'reason_codes': item['blocked_reasons']}
+               for item in plan['actions']]
     actions += [{'id': seed, 'status': 'blocked', 'reason': 'No eligible case/track task'} for seed in seed_pending(meta)]
     actions += [{'id': k, 'status': 'completed' if r['status'] == 'succeeded' else 'failed',
                  'reason': 'Query page ' + r['status']} for k, r in meta['online']['searches'].items()]
@@ -165,22 +350,19 @@ def stop_decision(meta, state, audit=None, trace=None):
         'rationale': 'No ready/running tasks or unattempted discovered sources within this operation scope.'}
 
 
-def fixed_source_stop_evidence(meta, state, url, case_id):
+def fixed_source_stop_evidence(meta, state, url, case_id, *, plan=None):
     """A fully assessed fixed source is an operation limit, not spent model/time budget."""
     from schema_generator import digest
     online = meta['online']
     record = online['sources'].get(digest(url))
-    if (meta.get('claimed_tasks') or not record or record['status'] != 'opened'
-            or source_backlog(meta) or search_backlog(meta)):
-        return None
-    tasks = [t for t in state.frontier.questions if t.id not in meta.get('citation_tasks', {})
-             and any(c.split('/', 1)[1].split('.', 1)[0] == case_id for c in t.target_cells)]
-    if any(t.status.value == 'running' or (t.status.value == 'pending' and
-           resolve_assessment(online, t.model_dump(), record['source'])['cursor'] != 'done') for t in tasks):
+    plan = plan if plan is not None else action_plan(meta, state, url, case_id)
+    if (not record or record['status'] != 'opened' or plan['executable_actions']
+            or 'task_claimed' in plan['blocked_reasons'] or source_backlog(meta) or search_backlog(meta)):
         return None
     reason = 'Fixed-source invocation: other sources, searches and citation expansion are outside this invocation'
-    actions = [{'id': t.id, 'status': 'blocked', 'reason': reason + '; reviewed prerequisites or source evidence remain missing'}
-               for t in state.frontier.questions if t.status.value in {'pending', 'blocked', 'running'}]
+    actions = [{'id': item['task']['id'], 'status': 'blocked',
+                'reason': ','.join(item['blocked_reasons']), 'reason_codes': item['blocked_reasons']}
+               for item in plan['actions']]
     actions += [{'id': seed, 'status': 'blocked', 'reason': reason} for seed in seed_pending(meta)]
     actions += [{'id': 'fixed-source:' + record['source']['source_id'], 'status': 'completed',
                  'reason': 'Opened source has no unassessed segments for any ready task in the selected case'},
@@ -206,7 +388,7 @@ def online_limit_policy(config, scope):
 
 def attribution_metrics(meta):
     """Sample precision is not a population estimate; unreviewed is never correct."""
-    from review_policy import find_decision, bound, supported_pair, source_reviewable, citation_allowed
+    from review_policy import find_decision, bound, review_accepted
     counts = {'attributed': 0, 'abstained': 0, 'absent': 0, 'pending_attribution': 0}
     chains, review_pairs = {}, []
     for rid, entry in meta['grounding'].items():
@@ -217,9 +399,7 @@ def attribution_metrics(meta):
             review = find_decision(meta, 'reviews', rid, index)
             if bound(a, candidate) and bound(review, candidate):
                 review_pairs.append((a, review))
-            if (not supported_pair(a, review, candidate)
-                    or not source_reviewable(entry['request']['source'], review)
-                    or not citation_allowed(meta, candidate['source_id'])):
+            if not review_accepted(meta, a, review, candidate, entry['request']['source']):
                 continue
             chains[(rid, index)] = candidate
     from audit_policy import _audit_walk

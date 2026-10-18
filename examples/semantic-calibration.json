@@ -1,0 +1,256 @@
+{
+  "annotation_kind": "agent source comparison; not human audit, independent review or automated semantic oracle",
+  "purpose": "One offline calibration round; native evidence bindings reproducible, semantic annotations require review. Never imported as runtime verdicts.",
+  "limits": [
+    "No saved corrected deployment_boundary response or same-field positive numeric-entailment response in these runs; cross-field controls do not fill that gap.",
+    "Repeated deterministic replay demonstrates binding reproducibility only, not stable model semantics.",
+    "Pass labels apply solely to the named proposition/criterion."
+  ],
+  "samples": [
+    {
+      "id": "evidence_support-1",
+      "run": 37,
+      "rule": "evidence_support",
+      "assessment": "fail",
+      "assessment_reason": "Selected fragment starts at computational power and lacks the negated limited-power assumption claimed by the reason. Nearby context cannot replace the selected evidence.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-regex-compatibility-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "5a4c9f16d9e13ca259460e2f28185288afa7d1102f560e6dd17e2f5da79cb085",
+      "input_sha256": "c90a0ab72505758ad182df04c43ee32e7c448394ba3ac06d90dbb33410ff323b",
+      "response_sha256": "93688985da57b0d901e4907cdb5813702ad1c5372b4719baeca105c6f71189a8",
+      "field": "parties_and_roles",
+      "candidate_value": "Alice and Bob operate independent trapped-ion nodes to perform measurements and generate correlated outcomes; a central station performs Bell-basis measurements on photons to herald entanglement; an adversary attempts to eavesdrop on the communication channel.",
+      "source_quote_id": "cb298fba:Q69",
+      "location": "page:1",
+      "quote": "computational power. Instead, the only required",
+      "observed_group": "threat_model_boundary_evidence",
+      "observed_findings": [
+        {
+          "source_quote_id": "cb298fba:Q69",
+          "reason": "Explicitly states that QKD security does not rely on the assumption that the adversary has limited computational power."
+        }
+      ],
+      "summary": "The candidate value accurately describes the roles of Alice, Bob, the central station, and the adversary as presented in the document. Page 2 explicitly states 'Alice and Bob each operate independent ion-trap nodes' and that photons are sent to a 'central station, where a probabilistic Bell-basis measurement is performed... heralded by the coincident detection'. The adversary's role is defined throughout as an entity attempting to gain information ('eavesdropping attacks', 'bound an adversary’s information'), with specific constraints noted in the threat model (no computational limits, bounded by quantum theory). No contradictions were found. The evidence supports all three components of the candidate claim: trapped-ion nodes for Alice/Bob, central station for Bell measurements/heralding, and an adversary targeting the channel/information. The domain rule requires identifying participants and roles without conflating authors; this is satisfied by citing operational descriptions rather than author lists. The evidence meets the rule for this candidate value. Verdict: supported."
+    },
+    {
+      "id": "evidence_support-2",
+      "run": 37,
+      "rule": "evidence_support",
+      "assessment": "fail",
+      "assessment_reason": "Random classical inputs does not establish PRIVATE randomness. The selected fragment omits privately; randomness and secrecy from an adversary are distinct properties.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-regex-compatibility-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "f8a66559251998eaaa4e3864852bbc1f73ce325c2336a5b8b8f33fb00fe6115a",
+      "input_sha256": "bf9232e228af844fd8ac5cc592bac2a369190be8957f286beec698911cbd8177",
+      "response_sha256": "f82fcc86910b079910dfe6ce74d6aacdabeb9b829600e47b7f115d6e911e5894",
+      "field": "constraints",
+      "candidate_value": "Constraints include the requirement to isolate systems to prevent information leakage, the use of private randomness for input selection, trusted classical processing, and the physical limitation that measurements are not spacelike separated.",
+      "source_quote_id": "80f9c6eb:Q74",
+      "location": "page:1",
+      "quote": "random\nclassical inputs to their quantum devices,",
+      "observed_group": "conditional_limits_evidence",
+      "observed_findings": [
+        {
+          "source_quote_id": "80f9c6eb:Q74",
+          "reason": "The protocol requires private random classical inputs, implying a constraint on the randomness generation mechanism (it must be private and classical)."
+        }
+      ],
+      "summary": "The candidate value accurately lists the constraints identified in the source text. Page 1 explicitly enumerates the required assumptions for security: (i) quantum theory correctness, (ii) system isolation to prevent leakage, (iii) private random classical inputs, and (iv) trusted classical computers. Additionally, the abstract on Page 1 notes the experimental constraint that measurements were performed 'without space-like separation'. The candidate aggregates these points correctly. No contradictions or negations were found that invalidate these specific claims as constraints. The domain rule requires specific physical, operational, and security constraints; the listed items fit this definition precisely based on the provided text."
+    },
+    {
+      "id": "evidence_support-3",
+      "run": 37,
+      "rule": "evidence_support",
+      "assessment": "fail",
+      "assessment_reason": "The opening of an assumption list does not state correctness, isolation, private choice and trusted processing claimed by the reason.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-regex-compatibility-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "f8a66559251998eaaa4e3864852bbc1f73ce325c2336a5b8b8f33fb00fe6115a",
+      "input_sha256": "bf9232e228af844fd8ac5cc592bac2a369190be8957f286beec698911cbd8177",
+      "response_sha256": "f82fcc86910b079910dfe6ce74d6aacdabeb9b829600e47b7f115d6e911e5894",
+      "field": "constraints",
+      "candidate_value": "Constraints include the requirement to isolate systems to prevent information leakage, the use of private randomness for input selection, trusted classical processing, and the physical limitation that measurements are not spacelike separated.",
+      "source_quote_id": "80f9c6eb:Q70",
+      "location": "page:1",
+      "quote": "assumptions\nare that: (i) quantum theory is",
+      "observed_group": "threat_model_boundary_evidence",
+      "observed_findings": [
+        {
+          "source_quote_id": "80f9c6eb:Q70",
+          "reason": "Defines the threat model assumptions: quantum theory correctness, isolation, private randomness, trusted computers. These are the boundaries within which the security holds."
+        }
+      ],
+      "summary": "The candidate value accurately lists the constraints identified in the source text. Page 1 explicitly enumerates the required assumptions for security: (i) quantum theory correctness, (ii) system isolation to prevent leakage, (iii) private random classical inputs, and (iv) trusted classical computers. Additionally, the abstract on Page 1 notes the experimental constraint that measurements were performed 'without space-like separation'. The candidate aggregates these points correctly. No contradictions or negations were found that invalidate these specific claims as constraints. The domain rule requires specific physical, operational, and security constraints; the listed items fit this definition precisely based on the provided text."
+    },
+    {
+      "id": "evidence_support-4",
+      "run": 37,
+      "rule": "evidence_support",
+      "assessment": "fail",
+      "assessment_reason": "Processing classical information on an unspecified platform does not establish trusted computers or protection against compromise claimed in the reason.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-regex-compatibility-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "efca1bebcd430cff7180bf432bc30664364434ad6fe045bf14cd0e3b1155cc79",
+      "input_sha256": "e8326f635a7c4b7dcfda0ee395b4ba7040b67aa01a1e152a4ce36b898161a702",
+      "response_sha256": "39f7aaa4b1512d72a18663cde55fd2c41cacf0f07d6e85c0f525a57b1e5d9a3e",
+      "field": "quantum_mechanism_role",
+      "candidate_value": "Quantum entanglement and Bell's theorem are used to certify the secrecy of the key without assuming the internal workings of the devices, bounding the adversary's information based on the violation of Bell inequalities.",
+      "source_quote_id": "4236d938:Q75",
+      "location": "page:1",
+      "quote": "and (iv) they\ncan process classical information on",
+      "observed_group": "threat_model_boundary_evidence",
+      "observed_findings": [
+        {
+          "source_quote_id": "4236d938:Q75",
+          "reason": "Parties must process classical information on trusted computers. The mechanism certifies the quantum key generation but assumes the classical post-processing environment is secure from side-channel attacks or compromise."
+        }
+      ],
+      "summary": "The paper explicitly describes Device-Independent QKD (DIQKD) where entanglement and Bell's theorem are used to certify secrecy without trusting the internal workings of the devices (modelled as black boxes). Page 1 states Ekert's proposal uses 'entanglement to bound an adversary’s information from Bell’s theorem'. Page 2 confirms 'no further assumptions are made about the internal workings... they are modelled as “black boxes”'. Page 3 details how the CHSH score bounds the adversary's knowledge via the Entropy Accumulation Theorem. The candidate accurately reflects the primary mechanism described. No contradictions were found; conditions regarding isolation and quantum-limited adversaries are standard threat-model boundaries, not contradictions to the specific claim about device independence regarding internal workings."
+    },
+    {
+      "id": "evidence_support-5",
+      "run": 37,
+      "rule": "evidence_support",
+      "assessment": "pass",
+      "assessment_reason": "For the narrow proposition that these measurements lack spacelike separation, the selected sentence states the complete negative relation. This is not approval of other assumptions or every interpretive clause in this response.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-regex-compatibility-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "f8a66559251998eaaa4e3864852bbc1f73ce325c2336a5b8b8f33fb00fe6115a",
+      "input_sha256": "bf9232e228af844fd8ac5cc592bac2a369190be8957f286beec698911cbd8177",
+      "response_sha256": "f82fcc86910b079910dfe6ce74d6aacdabeb9b829600e47b7f115d6e911e5894",
+      "field": "constraints",
+      "candidate_value": "Constraints include the requirement to isolate systems to prevent information leakage, the use of private randomness for input selection, trusted classical processing, and the physical limitation that measurements are not spacelike separated.",
+      "source_quote_id": "80f9c6eb:Q47",
+      "location": "page:1",
+      "quote": "without space-like separation. Our result shows",
+      "observed_group": "conditional_limits_evidence",
+      "observed_findings": [
+        {
+          "source_quote_id": "80f9c6eb:Q47",
+          "reason": "The text explicitly states that the measurements are performed 'without space-like separation', which is a physical limitation/constraint on the experiment's ability to close the locality loophole via spacelike separation."
+        }
+      ],
+      "summary": "The candidate value accurately lists the constraints identified in the source text. Page 1 explicitly enumerates the required assumptions for security: (i) quantum theory correctness, (ii) system isolation to prevent leakage, (iii) private random classical inputs, and (iv) trusted classical computers. Additionally, the abstract on Page 1 notes the experimental constraint that measurements were performed 'without space-like separation'. The candidate aggregates these points correctly. No contradictions or negations were found that invalidate these specific claims as constraints. The domain rule requires specific physical, operational, and security constraints; the listed items fit this definition precisely based on the provided text."
+    },
+    {
+      "id": "evidence_support-6",
+      "run": 38,
+      "rule": "evidence_support",
+      "assessment": "pass",
+      "assessment_reason": "The selected full sentence explicitly states isolation to prevent leakage, private random choice and trusted computers, carrying the three assumptions asserted by this finding.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-full-evidence-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "0f144a65b820dbb53ca875e5392405094d6988b817fad722345d050460a74cf7",
+      "input_sha256": "e014e6d440173cc3eca0df9bc2e9e7a1458843dc81d0eab6874b985f4a0f6dc6",
+      "response_sha256": "d4f16e55cf23f145b7678b30fb3312ee4e92ffd711b4cde12028ccc89eb61ca6",
+      "field": "constraints",
+      "candidate_value": "The system must maintain isolation of the qubits to prevent leakage of measurement basis settings and outcomes to the environment, ensure private randomness for input choices, and rely on trusted classical computers for processing, all while operating without space-like separation.",
+      "source_quote_id": "d038b5e5:Q35",
+      "location": "page:1",
+      "quote": "Instead, the only required assumptions\nare that: (i) quantum theory is correct, (ii) the parties\ncan isolate their systems to prevent information leaking\nto an adversary, (iii) they can privately choose random\nclassical inputs to their quantum devices, and (iv) they\ncan process classical information on trusted computers.",
+      "observed_group": "threat_model_boundary_evidence",
+      "observed_findings": [
+        {
+          "source_quote_id": "d038b5e5:Q35",
+          "reason": "The text explicitly lists the assumptions: (ii) isolate systems to prevent leakage, (iii) privately choose random inputs, and (iv) process on trusted computers. This supports the candidate's claim about these specific constraints."
+        }
+      ],
+      "summary": "The candidate value accurately summarizes the physical and operational constraints described in the paper. Page 1 (Sentence 35) explicitly lists the required assumptions: isolating systems to prevent information leaking to an adversary, privately choosing random classical inputs, and processing classical information on trusted computers. Sentence 28 on Page 1 notes that measurements are performed without space-like separation. Page 2 (Figure 1 caption) elaborates on the isolation step, stating that ions are transported to disconnect the photonic link so that measurement basis settings and outcomes do not leak into the environment. No contradictory evidence was found in the supplied segments. The domain rule requires sourced values for specific system constraints; the candidate meets this by citing explicit assumptions from the text."
+    },
+    {
+      "id": "qualification_retention-7",
+      "run": 38,
+      "rule": "qualification_retention",
+      "assessment": "fail",
+      "assessment_reason": "Source, candidate and summary all state absence of spacelike separation; all finding lists are empty. Compatibility with the candidate does not remove this deployment boundary.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-full-evidence-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "ae40aa01d1af50148072ac6c1e2ec6a7a02bc30e8a77e6d12abe2e9228b5d579",
+      "input_sha256": "6fc96eb583ce5d13cdd7a490e234035e30218faf7172a22a45320bf74730579a",
+      "response_sha256": "fe9b180b8b5bb177f6afb5a07f8ae3a12300a912f5e5141c1a93174c67f17bfa",
+      "field": "deployment_boundary",
+      "candidate_value": "experimental: The deployment boundary is limited to a laboratory setting with two trapped-ion nodes separated by about 2 meters, connected by short optical fibers, lacking space-like separation.",
+      "source_quote_id": "a8dbe83c:Q28",
+      "location": "page:1",
+      "quote": "These measurements\nare performed without space-like separation.",
+      "observed_group": null,
+      "observed_findings": [],
+      "summary": "The candidate value describes an experimental deployment boundary involving two trapped-ion nodes separated by about 2 meters, connected by short optical fibers, and lacking space-like separation. The provided context segments support these claims directly. Page 1 explicitly states 'These measurements are performed without space-like separation' (Q28) and describes the work as an 'experimental realisation' (Q25). Page 2 confirms the physical setup with 'Alice and Bob each operate independent ion-trap nodes, here separated by about 2 m' (Q54) and mentions the use of 'single-mode fibre, 1.75 m each' in Figure 1 caption (Q50), supporting the 'short optical fibers' description. The prefix 'experimental:' is correctly applied based on the text describing it as an experiment. No contradictions or limiting conditions were found that invalidate this specific deployment boundary description. The evidence supports the laboratory nature, the distance, the connection type, and the lack of space-like separation."
+    },
+    {
+      "id": "qualification_retention-8",
+      "run": 38,
+      "rule": "qualification_retention",
+      "assessment": "pass",
+      "assessment_reason": "Candidate already acknowledges lack of spacelike separation and the response retains it as a source-bound finding. Cross-field control for retention only, not endorsement of its category or whole-field completeness.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-full-evidence-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "0f144a65b820dbb53ca875e5392405094d6988b817fad722345d050460a74cf7",
+      "input_sha256": "e014e6d440173cc3eca0df9bc2e9e7a1458843dc81d0eab6874b985f4a0f6dc6",
+      "response_sha256": "d4f16e55cf23f145b7678b30fb3312ee4e92ffd711b4cde12028ccc89eb61ca6",
+      "field": "constraints",
+      "candidate_value": "The system must maintain isolation of the qubits to prevent leakage of measurement basis settings and outcomes to the environment, ensure private randomness for input choices, and rely on trusted classical computers for processing, all while operating without space-like separation.",
+      "source_quote_id": "d038b5e5:Q28",
+      "location": "page:1",
+      "quote": "These measurements\nare performed without space-like separation.",
+      "observed_group": "threat_model_boundary_evidence",
+      "observed_findings": [
+        {
+          "source_quote_id": "d038b5e5:Q28",
+          "reason": "The abstract states 'These measurements are performed without space-like separation.' This directly supports the constraint regarding the lack of space-like separation."
+        }
+      ],
+      "summary": "The candidate value accurately summarizes the physical and operational constraints described in the paper. Page 1 (Sentence 35) explicitly lists the required assumptions: isolating systems to prevent information leaking to an adversary, privately choosing random classical inputs, and processing classical information on trusted computers. Sentence 28 on Page 1 notes that measurements are performed without space-like separation. Page 2 (Figure 1 caption) elaborates on the isolation step, stating that ions are transported to disconnect the photonic link so that measurement basis settings and outcomes do not leak into the environment. No contradictory evidence was found in the supplied segments. The domain rule requires sourced values for specific system constraints; the candidate meets this by citing explicit assumptions from the text."
+    },
+    {
+      "id": "contradiction_classification-9",
+      "run": 38,
+      "rule": "contradiction_classification",
+      "assessment": "fail",
+      "assessment_reason": "For the same experimental key and consumed private randomness, greater by more than two orders of magnitude entails greater, so the quantitative propositions can both hold. Whether a measured result establishes a universal success criterion is a separate support/scope question, not this contradiction.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-full-evidence-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "04792cb03c1ef71c1921546907215f58afa4e3bb53ea6eff234efb39160fb027",
+      "input_sha256": "f96727c2fb6f6d41c58b0928fb2ae3553c55cea648e3cf369aa0c2f6d9abfa9d",
+      "response_sha256": "cde7133c921aeb9937047aefc93f7a6e5eb6aaf14eb776d35cc45bb6f29b7392",
+      "field": "success_criteria",
+      "candidate_value": "Success is achieved when the CHSH score exceeds a pre-agreed threshold, allowing the extraction of a shared key length greater than the consumed private randomness, demonstrating provably secure cryptography under general assumptions.",
+      "source_quote_id": "815f053c:Q67",
+      "location": "page:2",
+      "quote": "Combining these theoretical and experimental advances,\nwe successfully obtain a key whose length is more than two\norders of magnitude greater than the amount of private\nshared randomness consumed by the protocol.",
+      "observed_group": "contradictions_found",
+      "observed_findings": [
+        {
+          "source_quote_id": "815f053c:Q67",
+          "reason": "The candidate states success allows extraction of a shared key length *greater* than consumed private randomness. The source text states the key length is *more than two orders of magnitude greater* than the amount of private shared randomness consumed. While technically consistent (greater than), the specific quantitative claim ('two orders of magnitude') is present in the source but omitted in the candidate value_text. However, the core logical relationship (Key Length > Randomness Consumed) holds. More importantly, the candidate implies this is the definition of success criteria. The source defines success via the protocol steps (CHSH verification + Key Generation). The 'key length > randomness' is a reported *result* of their specific experimental parameters and efficiency improvements, not necessarily the universal *success criterion* for the protocol itself (which is just extracting a positive key rate after passing checks). But given the context of 'demonstrating provably secure cryptography', the result serves as evidence of success. No direct contradiction found regarding the logic, but the 'pre-agreed threshold' part is supported by Q91/Q120."
+        }
+      ],
+      "summary": "The candidate accurately reflects the conditions for success described in the paper: verifying the CHSH score against a pre-agreed threshold (supported by Q91, Q120) and obtaining a key. The specific claim about key length exceeding consumed randomness is directly supported by Q67 ('key whose length is more than two orders of magnitude greater than the amount of private shared randomness'). The claim about 'provably secure cryptography under general assumptions' is supported by Q29 and Q130. The search identified no negations or contradictions to these specific statements. The domain rule requires linking measurement results to task success; here, the CHSH score verification is the gate for key extraction, making it a valid success criterion component. The 'key length > randomness' is presented as the outcome demonstrating the protocol's viability/success in the abstract/intro context. All material clauses are supported by the provided quotes within the supplied segments. Verdict is supported because the evidence confirms the conditional nature (CHSH threshold) and the resulting metric (key vs randomness) cited as the demonstration of success/security capability."
+    },
+    {
+      "id": "contradiction_classification-10",
+      "run": 38,
+      "rule": "contradiction_classification",
+      "assessment": "pass",
+      "assessment_reason": "Under the explicitly stated reading that the unqualified input claim covers all protocol rounds, key-generation rounds are in scope and fixed Xi=0,Yi=2 refute universal random selection. If candidate scope meant only Bell-test rounds, no contradiction follows; ambiguous scope must remain unclear rather than be silently universalized. Cross-field control, not a same-field numeric entailment positive.",
+      "scope": "Only the stated criterion/proposition; not whole-field acceptance",
+      "native_state": "artifacts/quantum-scout/validation/v21-full-evidence-validation-20261017/workspace/state/quantum_adapter.json",
+      "call_id": "773ffcb645a322da5df3ae5075b52687367015eed0ec6318c8bcba88d2b6c407",
+      "input_sha256": "8ff86ca6df99b37fa4dcb450da17c81a55149f81ff856de105b0225ac966cc0a",
+      "response_sha256": "247f4865fa0a4b2d49c93f54947c6d0ebbfe9e02a2565aaf200954314135fab4",
+      "field": "inputs_and_outputs",
+      "candidate_value": "The inputs are private random classical settings (Xi, Yi) chosen by Alice and Bob for their measurement devices, and the outputs are binary measurement results (Ai, Bi) used to derive a shared secret key after classical post-processing.",
+      "source_quote_id": "6ac721e0:Q75",
+      "location": "page:2",
+      "quote": "For so-called key generation rounds, the inputs are fixed to Xi = 0 and Yi = 2,\nmaximising output correlations as quantified by a low\nquantum bit error rate Q = P (Ai ̸= Bi |Xi = 0, Yi = 2).",
+      "observed_group": "contradictions_found",
+      "observed_findings": [
+        {
+          "source_quote_id": "6ac721e0:Q75",
+          "reason": "The candidate states inputs are 'random classical settings'. Quote Q75 explicitly states: 'For so-called key generation rounds, the inputs are fixed to Xi = 0 and Yi = 2'. This directly contradicts the claim that inputs are random for the entire protocol or for the key-derivation specific inputs. The inputs are mixed: random for Bell tests, fixed for key generation."
+        }
+      ],
+      "summary": "The candidate describes the inputs as 'private random classical settings (Xi, Yi)' and outputs as 'binary measurement results (Ai, Bi)'. While the outputs Ai, Bi are indeed binary ({0, 1}) as per Q73, the characterization of inputs as purely 'random' is factually incomplete and misleading in the context of this DIQKD protocol. The source distinguishes between 'Bell test rounds' where inputs are random (Q73, Q51) and 'key generation rounds' where inputs are fixed (Q75). Since the key is derived from the correlations in the key generation rounds (and verified via Bell tests), describing the inputs solely as 'random' ignores the critical condition that key-generating inputs are deterministic/fixed. Therefore, the value_text does not accurately reflect the specific system task inputs as defined in the paper, which include both random and fixed settings depending on the round type. The domain rule requires not treating isolated experimental parameters as task inputs/outputs incorrectly; here, the 'input' definition is conflated by ignoring the fixed settings used for actual key bits."
+    }
+  ]
+}

@@ -20,6 +20,8 @@ def render_case_evidence(case, sources, failures=()):
         for collection in ('criteria_evidence', 'score_evidence'):
             rows.extend((track + '/' + field, evidence)
                         for field, evidence in evaluation.get(collection, {}).items())
+    rows.extend(('待汇总候选/' + item['table_id'] + '/' + item['field'], item)
+                for item in case.get('pending_aggregation', []))
     for failure in failures:
         if failure.get('case_id') == case.get('case_id') and failure.get('failure_type') == 'semantic_mismatch':
             rows.append(('未接受候选/' + failure.get('field', ''),
@@ -55,11 +57,15 @@ def render_case_evidence(case, sources, failures=()):
                 lines += ['关联位置：' + escape(str(ref.get('location', '')))]
                 lines += passage(text, '模型明确引用的关联原文')
         review = evidence.get('semantic_review') or {}
-        lines += ['语义结论：' + escape(str(review.get('verdict', '未记录'))),
+        lines += ['语义评审返回：' + escape(str(review.get('verdict', '未记录'))),
                   '评审理由：' + escape(str(review.get('reason', '未记录')))]
         search = review.get('counter_evidence_search') or {}
+        if search:
+            lines += ['评审原始总结：' + escape(str(search.get('summary', '未记录')))]
         for group, title in (('negation_evidence', '否定'), ('conditional_limits_evidence', '条件'),
                              ('threat_model_boundary_evidence', '威胁边界'), ('contradictions_found', '矛盾')):
+            if group in search and not search[group]:
+                lines += [title + '列表：空（评审原始返回）']
             for finding in search.get(group, []):
                 lines += ['', title + '：' + escape(str(finding.get('reason', '未记录'))),
                           '位置：' + escape(str(finding.get('location', '')))]
@@ -78,7 +84,7 @@ def format_warning(item):
 
 def human_audit_text(case):
     status = case.get('human_audit_status', 'unverified')
-    label = {'unverified': '人工未抽查', 'partial': '人工部分抽查', 'verified': '人工已验证',
+    label = {'unverified': '人工未抽查', 'partial': '人工部分抽查', 'verified': '人工归属抽查达标',
              'rejected': '人工已拒绝', 'not_applicable': '人工审计不适用'}[status]
     return f'{label}（{status}，当前派生状态）'
 

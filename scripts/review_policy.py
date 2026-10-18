@@ -116,6 +116,17 @@ def supported_pair(attribution, review, candidate):
             and counter_search_valid(review, candidate))
 
 
+def review_accepted(meta, attribution, review, candidate, source):
+    """One acceptance policy for projection, export and metrics; no semantic inference.
+
+    Conflict resolution remains a cell-level projection responsibility. Rejected
+    decisions are still persisted and may be reported by each consumer.
+    """
+    return (supported_pair(attribution, review, candidate)
+            and source_reviewable(source, review)
+            and citation_allowed(meta, candidate['source_id']))
+
+
 def source_depth(meta, source):
     record = next((record for record in meta.get('online', {}).get('sources', {}).values()
                    if record.get('source', {}).get('source_id') == source['source_id']), None)

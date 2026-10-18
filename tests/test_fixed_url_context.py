@@ -33,7 +33,7 @@ class FixedURLContextTests(unittest.TestCase):
         self.assertIn('not global exhaustion', first['stop_evidence']['endpoints'][0]['limitation'])
         self.assertTrue(meta['online']['assessments'])
         self.assertTrue(all(v == 'done' for v in meta['online']['assessments'].values()))
-        self.assertTrue(any(t.status.value == 'pending' for t in project(meta).frontier.questions))
+        self.assertTrue(any('source_assessed' in t.blocked_by for t in project(meta).frontier.questions))
         self.assertEqual(len(meta['online']['attempted_tasks']), 1)
         self.assertEqual(len([e for e in meta['online']['events'] if e['kind'] == 'round_completed']), 1)
         self.assertEqual(self.provider.calls, [])
@@ -65,7 +65,7 @@ class FixedURLContextTests(unittest.TestCase):
         self.assertEqual(self.provider.calls, [])
         self.assertTrue(all(not model.calls for model in models.values()))
         meta = load(self.path)
-        self.assertEqual(meta['claimed_tasks'], [])
+        self.assertFalse(meta['claimed_tasks'])
         self.assertTrue(all(v['attempts'] == 2 for v in meta['online']['sources'].values()))
         retries = [e for e in meta['online']['events'] if e['kind'] == 'source_retry']
         self.assertEqual(len(retries), 1)

@@ -1,7 +1,7 @@
 """Case-local coverage rules shared by the online stop guard and batch renderer."""
 
 
-from review_policy import supported_pair, find_decision, source_reviewable, citation_allowed
+from review_policy import supported_pair, find_decision, review_accepted
 
 
 def case_evidence(case):
@@ -28,35 +28,17 @@ def coverage_witness(cases, config, sources):
     """Never combine definitions, admissions, or scores from different cases/tracks."""
     for case in cases:
         definitions = case.get('problem_definition', {})
-        if not all(verified(definitions.get(f), sources) and (
-                definitions[f].get('coverage_status', 'covered') == 'covered' or (
-                    definitions[f].get('coverage_status') == 'not_applicable'
-                    and definitions[f].get('applicability_reason')))
-                for f in config['fields']):
-            continue
         for track, rules in config['tracks'].items():
-            evaluation = case.get('tracks', {}).get(track, {})
-            criteria = evaluation.get('criteria', {})
-            evidence = evaluation.get('criteria_evidence', {})
-            if not all(type(criteria.get(c)) is bool and verified(evidence.get(c), sources)
-                       and evidence[c].get('coverage_status', 'covered') == 'covered'
-                       and evidence[c]['value_text'] == str(criteria[c]).lower()
-                       for c in rules['admission_criteria']):
+            # The diagnostic and stop witness consume the same coverage policy.
+            if missing_coverage_fields(case, config, sources, track):
                 continue
+            evaluation = case['tracks'][track]
+            criteria = evaluation['criteria']
+            evidence = evaluation['criteria_evidence']
             passed = all(criteria[c] for c in rules['admission_criteria'])
             if evaluation.get('passed_admission') != int(passed):
                 continue
-            valid = []
-            if passed:
-                for dimension in rules['scoring_dimensions']:
-                    item = evaluation.get('score_evidence', {}).get(dimension)
-                    value = evaluation.get('scores', {}).get(dimension)
-                    if (type(value) is int and value in (1, 3, 5) and verified(item, sources)
-                            and item.get('coverage_status', 'covered') == 'covered'
-                            and item['value_text'] == str(value)):
-                        valid.append(dimension)
-                if len(valid) < config['scoring_rules']['minimum_valid_dimensions'][track]:
-                    continue
+            valid = valid_score_dimensions(case, config, sources, track) if passed else []
             items = {f'problem_definition/{f}': definitions[f] for f in config['fields']}
             items.update({f'{track}_admission/{c}': evidence[c] for c in rules['admission_criteria']})
             items.update({f'{track}_scoring/{d}': evaluation['score_evidence'][d] for d in valid})
@@ -135,20 +117,22 @@ def validate_case_coverage_stop(data, config=None):
 
 def reviewed_cases(meta, state):
     """Export only unconflicted, independently supported facts; preserve all gaps."""
-    cells = {}
+    cells, pending = {}, {}
     for decision in meta['reviews']:
         if decision['verdict'] != 'supported':
             continue
         entry = meta['grounding'][decision['report_id']]
         candidate = entry['report']['validated_candidates'][decision['candidate_index']]
         attribution = find_decision(meta, 'attributions', decision['report_id'], decision['candidate_index'])
-        if (not supported_pair(attribution, decision, candidate)
-                or not source_reviewable(entry['request']['source'], decision)
-                or not citation_allowed(meta, candidate['source_id'])):
+        if not review_accepted(meta, attribution, decision, candidate, entry['request']['source']):
             continue
         table = entry['request']['table_id']
         key = f"{table}/{candidate['case_id']}.{candidate['field']}"
-        if state.coverage_map.cells[key].status.value != 'filled':
+        cell = state.coverage_map.cells[key]
+        if cell.status.value != 'filled':
+            if len(cell.supporting_evidence_ids) > 1:
+                pending.setdefault(candidate['case_id'], []).append({**candidate,
+                    'table_id': table, 'semantic_review': decision, 'attribution_review': attribution})
             continue
         cells[key] = {**candidate, 'semantic_review': decision, 'attribution_review': attribution,
                       'coverage_status': candidate.get('coverage_status', 'covered')}
@@ -167,7 +151,7 @@ def reviewed_cases(meta, state):
                 'reason_source': 'explicit_gap' if explicit else 'none'}
         case = {'case_id': cid, 'scenario_description': meta.get('online', {}).get('config', {}).get(
             'cases', {}).get(cid, {}).get('description', cid), 'sub_domain': None,
-            'problem_definition': definitions,
+            'problem_definition': definitions, 'pending_aggregation': pending.get(cid, []),
             'problem_definition_complete': all(v.get('value_text') or v.get('reason_source') == 'explicit_gap' for v in definitions.values()),
             'failure_class': 'insufficient_evidence', 'tracks': {}, 'source_ids': [], 'discovery_trail': []}
         for track, rules in config['tracks'].items():
@@ -198,28 +182,36 @@ def reviewed_cases(meta, state):
     return cases
 
 
+def evidence_covers(item, sources, value=None, definition=False):
+    return (verified(item, sources) and (item.get('coverage_status', 'covered') == 'covered'
+        or (definition and item.get('coverage_status') == 'not_applicable'
+            and item.get('applicability_reason'))) and (value is None or item['value_text'] == value))
+
+
+def valid_score_dimensions(case, config, sources, track):
+    evaluation = case.get('tracks', {}).get(track, {})
+    return [field for field in config['tracks'][track]['scoring_dimensions']
+            if type(evaluation.get('scores', {}).get(field)) is int
+            and evaluation['scores'][field] in (1, 3, 5)
+            and evidence_covers(evaluation.get('score_evidence', {}).get(field), sources,
+                                str(evaluation['scores'][field]))]
+
+
 def missing_coverage_fields(case, config, sources, track):
     """Report cells lacking usable evidence, including conditional scoring gaps."""
     missing = []
-    def usable(item, value=None, definition=False):
-        return (verified(item, sources) and (item.get('coverage_status', 'covered') == 'covered'
-            or (definition and item.get('coverage_status') == 'not_applicable'
-                and item.get('applicability_reason'))) and (value is None or item['value_text'] == value))
     for field in config['fields']:
-        if not usable(case['problem_definition'].get(field), definition=True):
+        if not evidence_covers(case.get('problem_definition', {}).get(field), sources, definition=True):
             missing.append('problem_definition/' + field)
-    evaluation = case['tracks'].get(track, {})
+    evaluation = case.get('tracks', {}).get(track, {})
     rules = config['tracks'][track]
     criteria = evaluation.get('criteria', {})
     for field in rules['admission_criteria']:
         value = criteria.get(field)
-        if type(value) is not bool or not usable(evaluation.get('criteria_evidence', {}).get(field), str(value).lower()):
+        if type(value) is not bool or not evidence_covers(evaluation.get('criteria_evidence', {}).get(field), sources, str(value).lower()):
             missing.append(track + '_admission/' + field)
     if all(criteria.get(f) is True for f in rules['admission_criteria']):
-        gaps = [f for f in rules['scoring_dimensions'] if
-            type(evaluation.get('scores', {}).get(f)) is not int
-            or evaluation['scores'][f] not in (1, 3, 5)
-            or not usable(evaluation.get('score_evidence', {}).get(f), str(evaluation['scores'][f]))]
-        if len(rules['scoring_dimensions']) - len(gaps) < config['scoring_rules']['minimum_valid_dimensions'][track]:
-            missing += [track + '_scoring/' + f for f in gaps]
+        valid = valid_score_dimensions(case, config, sources, track)
+        if len(valid) < config['scoring_rules']['minimum_valid_dimensions'][track]:
+            missing += [track + '_scoring/' + f for f in rules['scoring_dimensions'] if f not in valid]
     return missing
