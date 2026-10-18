@@ -23,6 +23,30 @@
 
 `cases.deployment_stage` 只复制有正文支持的部署边界前缀枚举。缺证时 `value_text=NULL` 并说明原因，不能用空白或推断补值。问题定义的 evidence_level 只允许 primary/secondary，不允许 ai_inference。仅当具体系统、参与者和任务均未建立时判 `not_a_real_world_problem`；研究部署本身不构成拒绝理由。
 
+## 人工单选汇总
+
+人工回写是可选的结论选择入口，不是自动搜索的前置条件。待汇总字段仍可按既有来源进度、范围与预算调查新来源，不重复评审旧候选；调查结束仍无结论则保留未完成，不强制人工接手。
+
+需要人工回写时，显式选择一个已接地、独立双审通过且当前来源仍合格的完整候选。只采用其原值，不拼接、不生成新结论，不以文字异同推断冲突或共识。没有一个候选能完整支撑字段时保持待汇总；组合结论暂不支持，须记录 `combined_conclusion_unsupported`，不能冒充无候选或强制单选。
+
+`searchos_adapter.py aggregation-context <workspace> <table/case.field>` 返回候选、完整证据、评审、历史决定与当前快照。人工提交 JSON 给 `searchos_adapter.py aggregate-field <workspace> <request.json>`：
+
+| 字段 | 契约 |
+|---|---|
+| run_id、cell_id、snapshot_sha256 | 原样引用当前上下文，绑定本笔、字段、候选/双审/来源版本及决定历史；过期请求拒绝写入 |
+| decision_type | `select_one` / `reject_all` / `keep_pending` |
+| selected_candidate_id | 仅 select_one 必填，单个当前合格候选 ID；不能提交列表或自由文本结论 |
+| pending_reason | 仅 keep_pending 必填：`human_review_pending` 或 `combined_conclusion_unsupported` |
+| reviewer_kind、reviewer_id、request_ref、reason | human、实际决定者、人工指令引用、选择/拒绝/维持的依据；不得由 agent 冒充人工决定 |
+
+写入方补录时间、决定 ID、候选与证据 ID/位置/偏移/原文哈希及内容绑定，追加到原生 `quantum_adapter.json.aggregations`，不覆盖双审或删除候选。身份与指令引用是调用方声明，不是身份认证或真人抽查证明。上下文输出不是请求模板：仅提交表中对应决定所需的字段。
+
+未选候选记为“不采用作字段结论”，并不宣称原命题为假。reject_all 只拒绝本次集合，不关闭调查范围；有未处理来源仍可继续调查。原候选不重复评审、不自动复活；重新采用必须由人工对当前快照显式 select_one，理由说明重新考虑的依据。keep_pending 不撤销旧排除决定。
+
+候选重新抽取/修订、双审改变或来源版本更新导致绑定变化时，字段回到待汇总（`evidence_changed`），旧决定只保留追溯，不自动接受替代候选；新候选不继承旧决定。无人工汇总历史的字段仍按既有接受契约处理。已完成运行不可回写，以免改变历史覆盖回执。
+
+投影、准入、评分和覆盖见证只消费所选候选，见证携带人工决定；待汇总/拒绝不成为有效字段证据。执行既有 `export_batch.py <workspace>` 刷新人工视图。回写与导出均无模型调用，也不启动或授权真实运行。
+
 ## 禁止推断补证
 
 只引用本次实际打开的正文；元数据只作线索。禁止用训练记忆或 `ai_inference`

@@ -222,7 +222,7 @@ def build(meta):
     return {'run_id': meta['run_id'], 'batch_id': meta['run_id'] + '-online', 'run_status': status,
             'stop_reason': stop, 'configured_case_ids': meta['case_ids'], 'counts': counts, 'quality': quality, 'sources': sources, 'cases': cases,
             'events': sorted(events, key=lambda e: e['timestamp']), 'checkpoint': cp, 'grounding_failures': failures,
-            'review_audit': {'attributions': meta.get('attributions', []), 'reviews': meta['reviews'],
+            'review_audit': {'aggregations': meta.get('aggregations', []), 'attributions': meta.get('attributions', []), 'reviews': meta['reviews'],
                              'attribution_checks': meta.get('attribution_checks', [])},
             'audit_source': 'quantum_adapter.json', 'export_version': 2,
             'config_snapshot': meta['config'], 'config_sha256': meta['schema']['config_sha256']}

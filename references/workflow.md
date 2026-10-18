@@ -94,7 +94,7 @@ adapter是唯一状态所有者，SOCM/Frontier/EvidenceGraph/calibration由已�
 模型/搜索工厂、设置解析和隔离执行器复用SearchOS；不另造后端或写回共享JSON。依赖固定于项目锁与源码修订，升级先验证实际调用边界，不迁移旧事实。
 执行基线覆盖scripts/config/assets，文档基线覆盖references/SKILL/CHANGELOG；仅文档变化可警告，执行文件变化须新workspace或原归档skill，禁止补造历史基线。
 
-当前调度接口`online_policy.decide`从同一快照返回executable_actions、各动作及汇总blocked_reasons、terminal_reason和stop_evidence；预算结果由runner传入，并保留请求前的原子预算检查。原因代码限于代码实际分支（前置未满足、待汇总、范围外、被占用、来源处理完毕/不可用、服务不可用及预算耗尽），不另持久化动作计划。无可执行动作不得伪报预算耗尽；仍有待处理来源但全部阻塞时记录error/no_executable_action，不宣称范围耗尽。
+当前调度接口`online_policy.decide`从同一快照返回executable_actions、各动作及汇总blocked_reasons、terminal_reason和stop_evidence；预算结果由runner传入，并保留请求前的原子预算检查。原因代码限于代码实际分支（前置未满足、范围外、被占用、来源处理完毕/不可用、服务不可用及预算耗尽），不另持久化动作计划。无可执行动作不得伪报预算耗尽；仍有待处理来源但全部阻塞时记录error/no_executable_action，不宣称范围耗尽。
 `claimed_tasks`为task_id到owner/started_at的唯一占用映射；恢复只释放对应失效invocation的占用，重试与断点仍读既有调用/assessment记录，不写invocation.active_task。旧列表格式仅兼容读取，旧基线不能直接续跑。record-gap仍接受missing/hard_cell输入，存储只保留investigate、理由及尝试；hard_cell不再投影成证据资格状态，investigate=false只限制该工作区调查范围。
 多个已通过候选按report_id/candidate_index保留，不按value字符串合并；字段保留UNCERTAIN展示待汇总且不排入反复抽取，其他可调查字段继续。汇总选择接口尚未实现，不自动评审；pending_aggregation仅为案例导出的派生候选列表。中断来源只接受宿主经asyncio取消消息显式传入的StopRequest(initiator, reason, request_ref)：例如实际用户停止指令对应`task.cancel(StopRequest("user", "停止原因", "用户指令引用"))`。initiator限user/agent/system，理由及依据引用必填；这是调用方声明，不是异常类型证明的身份或授权。仅显式user映射user_aborted，agent/system或无来源的KeyboardInterrupt/CancelledError映射error/execution_interrupted；无来源记unknown，不解析自由文本猜测。CLI裸信号没有来源信息，因此保留unknown；宿主集成须在实际停止时提供声明，不在启动配置中预填。来源与原异常类型写入已有stop_evidence和失败事件，不另建停止请求账本；历史回执不改写，恢复不继承前笔取消来源或授权。
 
@@ -153,7 +153,7 @@ Track四项全true、双审职责、评分有效维数与纳入阈值属于结�
 - **阻塞与终止分开。** 阻塞原因使用有限代码，优先复用已有原因，允许同一动作有多个原因；自由文本仅解释。终止原因独立明确，不能把取消、预算耗尽或执行中断解释成没有待办，也不把原因代码各自变成新运行状态。
 - **拆分职责，同源派生。** 证据资格与当前调查范围分别由同一事实快照计算，不相互代替或各自维护；已接受且无需继续调查是合法组合。占用只保留一个权威事实，恢复所需占用者、开始时间、尝试和中断位置须可从它及原有调用/进度记录取得，不复制这些记录。
 - **派生信息须有实际消费者。** 决策、人工审阅和导出都是消费者；没有消费者的派生状态不维护，仅供诊断的信息不触发调度分支或投影重建。删除前核对消费者，原始失败与审计事实保留。
-- **多候选不由字符串裁决。** 不同文字不自动生成语义冲突，相同文字也不代替候选接地与双审；多个独立候选保留原文、判断及待汇总信息，汇总依据明确前不形成字段结论。汇总职责另行明确，不自动增加模型调用，不新增关键词等价或冲突规则。
+- **多候选不由字符串裁决。** 不同文字不自动生成语义冲突，相同文字也不代替候选接地与双审；多个独立候选保留原文、判断及待汇总信息，汇总依据明确前不形成字段结论。可通过[人工单选回写](evidence.md#人工单选汇总)显式形成结论，但不以人工介入作为继续搜索的前置，决定存于原生事实源，投影与导出消费同一结果；不自动增加模型调用，不新增关键词等价或冲突规则。
 
 合并状态前检查是否改变接受、可执行动作、恢复位置或授权成本；以下区别须保留在权威事实或可追溯原因中，不要求各自新增枚举：
 

@@ -124,12 +124,9 @@ def task_requirements(meta, state):
         pending = [k for k in targets if cells[k].status.value != 'filled']
         available = [k for k in pending if
             meta.get('gaps', {}).get(k, {}).get('investigate',
-                meta.get('gaps', {}).get(k, {}).get('status') != 'hard_cell')
-            and len(cells[k].supporting_evidence_ids) <= 1]
+                meta.get('gaps', {}).get(k, {}).get('status') != 'hard_cell')]
         reasons = []
         if pending and not available:
-            if any(len(cells[k].supporting_evidence_ids) > 1 for k in pending):
-                reasons.append('aggregation_pending')
             if any(not meta.get('gaps', {}).get(k, {}).get('investigate',
                 meta.get('gaps', {}).get(k, {}).get('status') != 'hard_cell') for k in pending):
                 reasons.append('outside_investigation_scope')

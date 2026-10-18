@@ -48,7 +48,7 @@ class StateConvergenceTests(unittest.TestCase):
                 self.assertIn('待汇总候选', visible)
                 self.assertEqual(visible.count('Two parties decide.'), 2)
                 definition = next(a for a in action_plan(meta, state)['actions'] if a['task']['table_id'] == 'problem_definition')
-                self.assertNotIn('problem_definition/TEST-0001.parties_and_roles', definition['task']['target_cells'])
+                self.assertIn('problem_definition/TEST-0001.parties_and_roles', definition['task']['target_cells'])
         self.assertEqual(adapter.load(self.path), original)
 
     def test_out_of_scope_is_not_evidence_and_decision_is_pure(self):

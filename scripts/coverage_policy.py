@@ -1,6 +1,8 @@
 """Case-local coverage rules shared by the online stop guard and batch renderer."""
 
 
+from schema_generator import digest
+from aggregation import candidate_id, context as aggregation_context, resolve as resolve_aggregation
 from review_policy import supported_pair, find_decision, review_accepted
 
 
@@ -52,6 +54,8 @@ def coverage_witness(cases, config, sources):
                     'semantic_verdict': r['verdict'], 'domain_rule_met': r['domain_rule_met'],
                     'counter_evidence_search': r['counter_evidence_search'],
                     'reviewer_ids': [a['reviewer_id'], r['reviewer_id']]}
+                if item.get('aggregation_decision'):
+                    chains[key]['aggregation_decision'] = item['aggregation_decision']
             return {'case_id': case['case_id'], 'track_id': track,
                     'passed_admission': passed, 'valid_dimensions': valid, 'decision_chains': chains}
     return None
@@ -130,12 +134,20 @@ def reviewed_cases(meta, state):
         key = f"{table}/{candidate['case_id']}.{candidate['field']}"
         cell = state.coverage_map.cells[key]
         if cell.status.value != 'filled':
-            if len(cell.supporting_evidence_ids) > 1:
+            if cell.display_hint == 'aggregation_pending':
+                if candidate_id(decision['report_id'], decision['candidate_index']) in resolve_aggregation(meta, key)['excluded_candidate_ids']:
+                    continue
                 pending.setdefault(candidate['case_id'], []).append({**candidate,
                     'table_id': table, 'semantic_review': decision, 'attribution_review': attribution})
             continue
+        evidence_id = 'qs_' + digest([decision['report_id'], decision['candidate_index']])[:24]
+        if evidence_id not in cell.supporting_evidence_ids:
+            continue
         cells[key] = {**candidate, 'semantic_review': decision, 'attribution_review': attribution,
                       'coverage_status': candidate.get('coverage_status', 'covered')}
+        aggregation = resolve_aggregation(meta, key) if meta.get('aggregations') else {'decision': None}
+        if aggregation['decision']:
+            cells[key]['aggregation_decision'] = aggregation['decision']
     config = meta['config']
     cases = []
     for cid in meta['case_ids']:
@@ -154,6 +166,15 @@ def reviewed_cases(meta, state):
             'problem_definition': definitions, 'pending_aggregation': pending.get(cid, []),
             'problem_definition_complete': all(v.get('value_text') or v.get('reason_source') == 'explicit_gap' for v in definitions.values()),
             'failure_class': 'insufficient_evidence', 'tracks': {}, 'source_ids': [], 'discovery_trail': []}
+        field_ids = sorted({d['cell_id'] for d in meta.get('aggregations', [])
+                            if d['cell_id'].split('/', 1)[1].split('.', 1)[0] == cid})
+        if field_ids:
+            case['aggregation'] = []
+            for k in field_ids:
+                ctx = aggregation_context(meta, k)
+                result = resolve_aggregation(meta, k, ctx)
+                case['aggregation'].append({**ctx, **{name: result[name] for name in
+                    ('outcome', 'pending_reason', 'excluded_candidate_ids')}})
         for track, rules in config['tracks'].items():
             ce = {c: evidence(track + '_admission', c) for c in rules['admission_criteria']}
             criteria = {c: v['value_text'] == 'true' if v else 'insufficient_evidence' for c, v in ce.items()}

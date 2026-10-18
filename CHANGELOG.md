@@ -1,5 +1,15 @@
 # 变更记录
 
+## v21 — 2026-10-18 可选人工单选回写（离线验证）
+
+| 变化 | 验证与限制 |
+|---|---|
+| 新增aggregation-context/aggregate-field：select_one、reject_all、keep_pending绑定具体候选、原文位置/哈希、双审与来源快照，决定追加到原生事实源；所选候选供投影、准入、评分及覆盖见证消费。 | 不改写双审，不拼接候选；组合结论暂不支持时显式保留待汇总原因。候选/评审/来源变化使决定失效；旧排除项须人工显式重新选择，不因新证据自动复活。 |
+| 人工回写是可选能力；移除“待汇总即排除字段后续调查”的调度条件，来源游标仍阻止旧候选重复抽取/评审。 | 未形成结论的字段不支撑准入/评分，但自动搜索可在当前授权范围和预算内处理新来源，无需人工介入。 |
+| 九条边界、请求绑定与无人工回写自动处理新来源的runner用例，以及调度/集成回归共54项、20子用例通过（75.56秒）；第37–39笔原始事实与接受/覆盖/停止回放不变，skill格式及差异检查通过。 | 所有候选、人工指令及模型响应均为离线夹具；不是真人抽查或语义验证。新增付费0，真实状态仍第39笔6/8、语义失败、未准入/评分；不恢复旧方案或额度。 |
+
+结果续记原回执 `artifacts/quantum-scout/validation/v21-calibrated-semantic-validation-20261017/execution.json` 的state_convergence.optional_human_aggregation；真实运行须另行逐笔授权。
+
 ## v21 — 2026-10-18 中断来源单项收尾（离线验证）
 
 - 删除“KeyboardInterrupt/CancelledError即用户取消”的推断；宿主可通过既有asyncio取消消息携带StopRequest(user/agent/system、原因、实际指令引用)。仅显式user记user_aborted，其余记error及execution_interrupted来源诊断；裸信号/自由文本为unknown。保留原异常、占用释放及调用断点，不新增状态、命令、请求账本或恢复授权。

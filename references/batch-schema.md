@@ -85,7 +85,7 @@ case_audit 若存在须匹配，但不要求 audit_passed=true；self_audit 必�
 coverage_status 为 covered/not_applicable；后者只允许有正文支持的问题定义。
 对应 source_id 必须是 opened，无冲突；标志或缺失 reason 本身不构成覆盖。
 
-`export_batch.py` 的案例证据只收录同一运行满足接受契约、字段可形成结论的评审记录，不把旧候选或该记录的存在写成已证实语义真值；接受与验证的含义见[证据协议](evidence.md#案例归属与独立语义复核)。案例pending_aggregation保存待汇总候选、完整原文及评审供人工查看，不计入定义/准入/评分证据；该列表为派生输出，不是新事实账本。
+`export_batch.py` 的案例证据只收录同一运行满足接受契约、字段可形成结论的评审记录，不把旧候选或该记录的存在写成已证实语义真值；接受与验证的含义见[证据协议](evidence.md#案例归属与独立语义复核)。案例pending_aggregation保存待汇总候选、完整原文及评审供人工查看，不计入定义/准入/评分证据；该列表为派生输出，不是新事实账本。人工回写后，cases[].aggregation展示当前绑定、决定历史、排除项及待汇总原因；review_audit.aggregations保留原始决定，所选字段证据及coverage_witness携带aggregation_decision。拒绝与过期决定不计入结论；具体契约见[人工单选汇总](evidence.md#人工单选汇总)。
 预算停止原样保留，并在 stop_evidence.budget_cause 记录具体限额。
 
 在线 export_version=2 的 review_audit 保存 attributions、reviews 和 attribution_checks，包含未通过的判断。

@@ -138,7 +138,6 @@ def project(meta, *, with_tasks=True):
         supported.setdefault(cell_id, []).append((value, review, candidate, request))
     for cell_id, claims in supported.items():
         cell = coverage.cells[cell_id]
-        nodes = []
         fact_ids = set()
         for value, review, candidate, request in claims:
             receipt = candidate['grounding']
@@ -157,12 +156,18 @@ def project(meta, *, with_tasks=True):
                 alignment='full', alignment_note='Independent ' + review['reviewer_kind'] + ' review: ' + review['reason'],
                 span=tuple(receipt['span']), text_hash=receipt['source_sha256']))
             cell.supporting_evidence_ids.append(evidence_id)
-            nodes.append((value, evidence_id))
-        # Multiple candidate identities need explicit aggregation, even if text matches.
-        pending = len(nodes) > 1
-        cell.status = CellStatus.UNCERTAIN if pending else CellStatus.FILLED
-        cell.best_alignment = 'partial' if pending else 'full'
-        cell.display_hint = 'aggregation_pending' if pending else claims[0][0]
+    # Human decisions also apply when their formerly eligible evidence has disappeared.
+    from aggregation import resolve
+    for cell_id in set(supported) | {d['cell_id'] for d in meta.get('aggregations', [])}:
+        cell = coverage.cells[cell_id]
+        result = resolve(meta, cell_id)
+        selected = result['selected']
+        cell.supporting_evidence_ids = ([selected['binding']['evidence_id']] if selected else
+            [item['binding']['evidence_id'] for item in result['remaining']])
+        cell.status = CellStatus.FILLED if selected else CellStatus.UNCERTAIN
+        cell.best_alignment = 'full' if selected else 'partial'
+        cell.display_hint = (value_text(selected['candidate']['value_text']) if selected else
+                             'aggregation_pending' if result['outcome'] == 'pending' else 'aggregation_rejected')
     if with_tasks:
         from online_policy import action_plan
         for item in action_plan(meta, state)['actions']:
@@ -446,13 +451,24 @@ def main():
     add.add_argument('--case-id', action='append', required=True)
     release = sub.add_parser('release-task'); release.add_argument('workspace', type=Path)
     release.add_argument('task_id'); release.add_argument('--reason', required=True)
+    aggregation = sub.add_parser('aggregation-context'); aggregation.add_argument('workspace', type=Path)
+    aggregation.add_argument('cell_id')
+    selection = sub.add_parser('aggregate-field'); selection.add_argument('workspace', type=Path)
+    selection.add_argument('request', type=Path)
     for command in ('summary', 'next-task', 'repair', 'ground', 'attribute', 'review', 'audit-attribution', 'record-gap'):
         child = sub.add_parser(command); child.add_argument('workspace', type=Path)
         if command in {'ground', 'attribute', 'review', 'audit-attribution', 'record-gap'}: child.add_argument('request', type=Path)
         if command == 'audit-attribution': child.add_argument('--post-hoc', action='store_true')
     args = parser.parse_args()
     path = (args.workspace or ProjectLayout(args.project_root).new_workspace('session')).resolve()
-    if args.command == 'prepare':
+    if args.command == 'aggregation-context':
+        from aggregation import context
+        with locked(path):
+            output = context(load(path), args.cell_id)
+    elif args.command == 'aggregate-field':
+        from aggregation import record
+        output = record(path, json.loads(args.request.read_text()))
+    elif args.command == 'prepare':
         if args.batch and args.case_id: parser.error('Use --batch or --case-id, not both')
         batch = json.loads(args.batch.read_text()) if args.batch else None
         state = prepare(path, batch, args.case_id, args.config_dir)

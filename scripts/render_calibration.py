@@ -27,6 +27,18 @@ def render_case_evidence(case, sources, failures=()):
             rows.append(('未接受候选/' + failure.get('field', ''),
                          {**failure['candidate'], 'semantic_review': failure.get('review', {})}))
     lines = []
+    for aggregation in case.get('aggregation', []):
+        lines += ['', '人工汇总：' + escape(aggregation['cell_id']) + '；' + escape(aggregation['outcome']),
+                  '当前快照：' + escape(aggregation['snapshot_sha256']),
+                  '待汇总原因：' + escape(str(aggregation['pending_reason'] or '无'))]
+        for decision in aggregation['decisions']:
+            lines += ['决定：' + escape(decision['decision_type']) + '；' + escape(decision['reviewer_id']) +
+                      '；' + escape(decision['at']), '依据：' + escape(decision['reason']) +
+                      '；指令引用：' + escape(decision['request_ref'])]
+        for item in aggregation['candidates']:
+            label = ('不采用作字段结论/' if item['binding']['candidate_id'] in aggregation['excluded_candidate_ids'] else '汇总候选/')
+            rows.append((label + item['binding']['candidate_id'],
+                         {**item['candidate'], 'semantic_review': item['semantic_review']}))
     for field, evidence in rows:
         lines += ['', '### ' + escape(field), '', escape(str(evidence.get('value_text') or '缺证／尚未完成'))]
         if not evidence.get('quote'):
@@ -56,6 +68,10 @@ def render_case_evidence(case, sources, failures=()):
                 seen.add(' '.join(text.split()))
                 lines += ['关联位置：' + escape(str(ref.get('location', '')))]
                 lines += passage(text, '模型明确引用的关联原文')
+        if evidence.get('aggregation_decision'):
+            decision = evidence['aggregation_decision']
+            lines += ['人工选择：' + escape(decision['reviewer_id']) + '；' + escape(decision['at']),
+                      '依据：' + escape(decision['reason']) + '；指令引用：' + escape(decision['request_ref'])]
         review = evidence.get('semantic_review') or {}
         lines += ['语义评审返回：' + escape(str(review.get('verdict', '未记录'))),
                   '评审理由：' + escape(str(review.get('reason', '未记录')))]
