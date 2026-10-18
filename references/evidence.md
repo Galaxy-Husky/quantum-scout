@@ -29,6 +29,8 @@
 
 需要人工回写时，显式选择一个已接地、独立双审通过且当前来源仍合格的完整候选。只采用其原值，不拼接、不生成新结论，不以文字异同推断冲突或共识。没有一个候选能完整支撑字段时保持待汇总；组合结论暂不支持，须记录 `combined_conclusion_unsupported`，不能冒充无候选或强制单选。
 
+集合结论是已识别的待决设计项，是否支持及实施时间尚未决定；当前不实现，不影响单选回写和自动调查。
+
 `searchos_adapter.py aggregation-context <workspace> <table/case.field>` 返回候选、完整证据、评审、历史决定与当前快照。人工提交 JSON 给 `searchos_adapter.py aggregate-field <workspace> <request.json>`：
 
 | 字段 | 契约 |
@@ -39,7 +41,7 @@
 | pending_reason | 仅 keep_pending 必填：`human_review_pending` 或 `combined_conclusion_unsupported` |
 | reviewer_kind、reviewer_id、request_ref、reason | human、实际决定者、人工指令引用、选择/拒绝/维持的依据；不得由 agent 冒充人工决定 |
 
-写入方补录时间、决定 ID、候选与证据 ID/位置/偏移/原文哈希及内容绑定，追加到原生 `quantum_adapter.json.aggregations`，不覆盖双审或删除候选。身份与指令引用是调用方声明，不是身份认证或真人抽查证明。上下文输出不是请求模板：仅提交表中对应决定所需的字段。
+写入方补录时间、决定 ID、候选与证据 ID/位置/偏移/原文哈希及内容绑定，追加到原生 `quantum_adapter.json.aggregations`，不覆盖双审或删除候选。本契约有意将身份与指令引用作为调用方声明，不执行身份认证；`reviewer_kind=human` 本身不是真人抽查证明。上下文输出不是请求模板：仅提交表中对应决定所需的字段。
 
 未选候选记为“不采用作字段结论”，并不宣称原命题为假。reject_all 只拒绝本次集合，不关闭调查范围；有未处理来源仍可继续调查。原候选不重复评审、不自动复活；重新采用必须由人工对当前快照显式 select_one，理由说明重新考虑的依据。keep_pending 不撤销旧排除决定。
 

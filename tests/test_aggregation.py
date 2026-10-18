@@ -221,6 +221,26 @@ class AggregationTests(unittest.TestCase):
         self.assertEqual(result['selected']['binding']['candidate_id'], excluded[0])
         self.assertNotIn(excluded[0], result['excluded_candidate_ids'])
 
+    def test_explicit_reconsideration_cannot_revive_ineligible_candidate(self):
+        self.setup_candidates()
+        record(self.path, self.request('reject_all'))
+        meta = adapter.load(self.path)
+        candidate = context(meta, CELL)['candidates'][0]['binding']
+        for review in meta['reviews']:
+            if (review['report_id'], review['candidate_index']) == (candidate['report_id'], candidate['candidate_index']):
+                review['verdict'] = 'semantic_mismatch'
+        adapter.persist(self.path, meta)
+        before = adapter.load(self.path)
+        request = self.request('select_one')
+        request['selected_candidate_id'] = candidate['candidate_id']
+        with self.assertRaisesRegex(ValueError, 'currently grounded, independently supported'):
+            record(self.path, request)
+        after, state, case = self.view()
+        self.assertEqual(after, before)
+        self.assertIsNone(resolve(after, CELL)['selected'])
+        self.assertIsNone(case['problem_definition']['parties_and_roles']['value_text'])
+        self.assertNotEqual(state.coverage_map.cells[CELL].status.value, 'filled')
+
     def test_automatic_search_processes_new_source_without_human_writeback(self):
         import asyncio
         from searchos_online import OnlineRunner

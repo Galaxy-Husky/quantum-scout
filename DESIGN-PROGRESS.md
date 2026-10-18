@@ -19,6 +19,8 @@
 
 ## 进展入口
 
+面向外部评审的[语义方案探索与评估](docs/semantic-design-evaluation.md)说明第37–39笔失败证据、方向1原型停止原因及方向2/3的可行性与成本边界，无需访问内部回执。
+
 真实运行结果、失败过程、修复触发状态和下一步统一记录于 [CHANGELOG.md](CHANGELOG.md)，此处不重复维护。详细请求、响应和调用关联保留在内部 artifacts 供分析；此处与变更记录仅维护概要。
 
 依据：[设计入口](SKILL.md)、[执行流程](references/workflow.md)、[证据协议](references/evidence.md)。

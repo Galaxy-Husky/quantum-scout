@@ -1,5 +1,34 @@
 # 变更记录
 
+## v21 — 2026-10-18 面向外部评审的探索说明
+
+- 按用户要求将[语义方案探索与评估](docs/semantic-design-evaluation.md)纳入skill仓库，并在DESIGN-PROGRESS添加入口：独立说明37–39笔失败实例、方向1指标撤回及停止、方向2各变体与条件化17→25调用示例、方向3风险；无需访问内部回执。明确实际人/代理原文审阅与旧标注回放的区别，下一项决策是独立验收承担者及范围。
+- 方向2仅核对现有单锚点/单次语义接口、保存原文偏移及历史拆分失败，未实现新原型。文档路径/内容边界与差异检查通过；未新增运行代码或测试，付费及模型调用0，真实仍第39笔6/8、语义失败、未准入/评分。结果续记原回执 `artifacts/quantum-scout/validation/v21-calibrated-semantic-validation-20261017/execution.json` 的 subsequent_direction_assessment.direction2_feasibility。
+
+## v21 — 2026-10-18 方向1审阅纠正并停止
+
+- 代码审阅发现Q41仅绑定原文/旧理由后固定返回caught，不能计作独立捕获；此前11/11口径撤回，现为10项固定反例检查命中、1项仅旧标注保留。此前4→0混用旧总结分歧与新列表差异，后值改为不可比较；结构化列表仍0→0。
+- 已纠正隔离原型及同一comparison.html/results.json，按反掩盖条件停止方向1（回放退出1）。10项报告/停止回归通过（0.076秒）不代表原型验收通过；未继续补语义判据或实施其他方向。
+- 付费及模型调用0，37–39笔事实/导出6文件哈希不变；真实仍第39笔6/8、语义失败、未准入/评分。原回执 `artifacts/quantum-scout/validation/v21-calibrated-semantic-validation-20261017/execution.json` 的 subsequent_direction_assessment.direction1_prototype 保留初次结果并标明已被审阅纠正；下一步仅离线重新评估方向2。
+
+## v21 — 2026-10-18 方向1隔离原型初次记录（已被后续审阅纠正）
+
+- `artifacts/quantum-scout/prototypes/shared-findings-20261018/` 保存独立原型、37–39笔20份已完成评审/原文夹具及单张comparison.html：解释与导出共享发现，验收另读带哈希/偏移的原文及明确agent标注，原总结保留。未改线上实现、evidence规则或汇总契约。
+- 初次报告的“11/11独立捕获”和“4→0”口径已撤回，实际为10项固定反例检查命中、1项仅保留旧标注，前后总结差异不可同口径比较；以本文件上方“方向1审阅纠正并停止”为准。初次9项检查通过（0.073秒）未揭露该验收缺陷；原生事实与导出6文件哈希不变。
+- 预算、付费及新增模型调用均0；初次待审阅状态已由后续停止结果替代，不选定线上方案。真实状态仍第39笔6/8、语义失败、未准入/评分；量化及命令续记原回执 `artifacts/quantum-scout/validation/v21-calibrated-semantic-validation-20261017/execution.json` 的 subsequent_direction_assessment.direction1_prototype。
+
+## v21 — 2026-10-18 语义方向离线归因确认
+
+- 对照第39笔原生评审与已保存正文：inputs_and_outputs、existing_practice确认限定保留失败；success_criteria的Q123缺CHSH前件、Q124依赖Otherwise，constraints的Q41不足以支持“实现特有”理由，证据承载疑点仍在。数值强弱矛盾目标未触发；不推断模型过载或内部原因。
+- 候选方向优先评估原文绑定发现的单一表示，但不得靠删除总结掩盖遗漏；锚点/支持分离须先评估既有调用预算内的跨片段绑定，缩范围及新增拆分调用暂无充分依据。仅方向比较，未改运行实现或选定上线方案；具体预算待可审阅原型量化，语义失败即停、不纠错续跑。
+- 原生状态SHA256核对不变，本轮付费上限及调用均0，未运行模型测试；真实仍第39笔6/8、语义失败、未准入/评分。归因及候选比较续记原回执 `artifacts/quantum-scout/validation/v21-calibrated-semantic-validation-20261017/execution.json` 的 subsequent_direction_assessment.attribution_confirmation_20261018，供下一步离线原型选择消费。
+
+## v21 — 2026-10-18 单选交叉边界收尾
+
+- 核对 d2c7aa8：拒绝候选仍可调查新来源、快照失效保留历史且不自动接受替代项、旧排除项须显式重选均已有用例；补入“旧排除候选失去双审资格后，当前快照的显式重选仍拒绝且事实不变”。隔离副本 test_aggregation.py 实测12项/9子用例通过（24.46秒），差异检查通过；未改运行代码。
+- evidence.md 明确集合结论是否支持及时间待决，当前不实现；人工身份是有意的调用方声明而非认证。快速核对本次收敛相关投影、汇总、导出和归属统计均有消费者，未发现需删除的无消费者派生状态；不扩展为全范围审计。
+- 预算及付费调用均0；夹具不是真人抽查或语义验证，真实状态仍第39笔6/8、语义失败、未准入/评分。结果续记 `artifacts/quantum-scout/validation/v21-calibrated-semantic-validation-20261017/execution.json` 的 state_convergence.optional_human_aggregation.boundary_followup；结构收尾完成，下一步为独立决定语义方案，真实运行另行逐笔授权。
+
 ## v21 — 2026-10-18 可选人工单选回写（离线验证）
 
 | 变化 | 验证与限制 |
