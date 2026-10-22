@@ -330,3 +330,9 @@
 - 将辅助说明、历史变更、非核心测试和6个独立辅助入口移入本地 archive/；活跃规则合并至证据、流程、批次契约，archive/ 加入 Git 忽略。
 - 保留在线实际依赖、配置、接地和既有短引/映射/归属修复；归档改变执行文件集合，新运行使用全新 workspace。
 - 真实单案例仍以最后实际回执为准；整理与离线通过不代表 Track 跑通。v19及更早原件在 archive/v19/。
+# 2026-10-22
+
+- DeepSeek Search/Fetch pilot: after removing proxy variables and consolidating configuration, the run completed with 3 opened sources and 24 model calls, stopping at `analysis_limit_reached`; 3 evidence cells filled, 5 uncertain, 19 missing, and no admission/score was triggered. The saved run is `artifacts/quantum-scout/workspaces/pilot-workspace-deepseek-20261022-final3`.
+- DeepSeek pilot rerun with `analysis_limit=12` reached 5 discovered and 2 opened sources before stopping on an extraction schema error (`LLMExtractionError`) after 21 model calls; 1 candidate was extracted, the problem definition remained incomplete, and admission/score did not run. Saved at `artifacts/quantum-scout/workspaces/pilot-workspace-deepseek-20261022-analysis12`.
+- The extraction bridge now states the required top-level ContextGem array shape with an explicit example; singleton object responses remain rejected rather than being assigned to an arbitrary field.
+- The extraction prompt now requires non-empty paragraph/sentence references on every candidate and instructs the model to return an empty item list when it cannot cite evidence; ungrounded candidates remain fail-closed.

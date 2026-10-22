@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urldefrag, urlparse
 
 import httpx
 
@@ -39,6 +39,29 @@ async def download(url, limit=20_000_000, timeout=30):
     raise ValueError('Too many redirects')
 
 
+async def deepseek_fetch(url, limit=20_000_000, timeout=30):
+    """Fetch a public URL as Markdown through DeepSeek Fetch."""
+    import os
+    key = os.environ.get('DEEPSEEK_API_KEY', '')
+    if not key:
+        raise RuntimeError('DEEPSEEK_API_KEY not set')
+    public_url(url)
+    # Search results may point at a section or figure. Fetch accepts the page
+    # URL; fragments are client-side selectors and can make the API reject it.
+    fetch_url, _fragment = urldefrag(url)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            'https://api.deepseek.com/v1/tools/fetch',
+            headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
+            json={'url': fetch_url})
+        response.raise_for_status()
+        payload = response.json()
+    content = payload.get('content', '')
+    if not isinstance(content, str) or not content.strip() or len(content.encode()) > limit:
+        raise ValueError('DeepSeek Fetch returned empty or oversized content')
+    return content.encode(), 'text/markdown', fetch_url
+
+
 def make_provider(name):
     from searchos.tools.simple_browser.search import build_search_provider
     return build_search_provider(name)
@@ -58,6 +81,12 @@ def source_segments(data, content_type):
             pages = text.read_text(errors='replace').split('\f')
         return [{'location': f'page:{i+1}', 'text': page.strip()}
                 for i, page in enumerate(pages) if page.strip()]
+    if 'markdown' in content_type:
+        # DeepSeek Fetch returns escaped Markdown (for example ``\\#``).
+        # Keep paragraph boundaries as stable locations for grounding.
+        paragraphs = [part.strip() for part in data.decode(errors='replace').split('\n\n')]
+        return [{'location': f'paragraph:{i+1}', 'text': part}
+                for i, part in enumerate(paragraphs) if part]
     if 'html' in content_type:
         from lxml import html
         doc = html.fromstring(data)
@@ -97,11 +126,14 @@ async def parse_source(data, content_type):
             for i, page in enumerate(pages) if page.strip()]
 
 
-async def open_source(url, directory, run_id):
+async def open_source(url, directory, run_id, provider=None):
     # Abstracts and search snippets are discovery leads, not opened paper bodies.
     if urlparse(url).hostname in {'arxiv.org', 'www.arxiv.org', 'export.arxiv.org'}:
         url = url.replace('/abs/', '/pdf/')
-    data, content_type, final_url = await download(url)
+    if provider == 'deepseek':
+        data, content_type, final_url = await deepseek_fetch(url)
+    else:
+        data, content_type, final_url = await download(url)
     segments = await parse_source(data, content_type)
     if not segments or sum(len(s['text']) for s in segments) < 100:
         raise ValueError('Empty or unreadable document body')

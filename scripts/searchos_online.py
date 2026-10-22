@@ -334,7 +334,7 @@ def read_config(path):
             not isinstance(config['providers'], list) or not config['providers'] or
             any(not isinstance(provider, str) for provider in config['providers']) or
             len(set(config['providers'])) != len(config['providers']) or
-            set(config['providers']) - {'serper', 'tavily', 'ragflow'}):
+            set(config['providers']) - {'serper', 'tavily', 'ragflow', 'deepseek'}):
         raise ValueError('Explicit cases and supported providers are required')
     for cid, case in config['cases'].items():
         if (not isinstance(cid, str) or not re.fullmatch(r'[A-Z]{3,4}-\d{4}', cid) or
@@ -517,7 +517,9 @@ class OnlineRunner:
         self.path, self.config = Path(path), config
         self.models = models
         self.providers = providers or {p: make_provider(p) for p in config['providers']}
-        self.opener = opener or open_source
+        self.opener = opener or (lambda url, directory, run_id:
+                                 open_source(url, directory, run_id,
+                                             provider=config['providers'][0]))
         from contextgem_extractor import extract
         self.extractor = extractor or extract
         self.citations = citations

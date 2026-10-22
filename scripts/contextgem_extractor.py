@@ -334,6 +334,12 @@ async def extract(runner, context, segments):
                            'Each extracted_items entry must contain value (the object matching the concept structure), '
                            'justification, and reference_paragraphs with reference_paragraph_id and reference_sentence_ids. '
                            'Use each paragraph ID once per item, grouping all its sentence IDs in that one entry. '
+                           'The top-level response MUST be a JSON array, even when there is only one concept; '
+                           'for example: [{"concept_id":"C0","extracted_items":[]}]. Never return a top-level '
+                           'object containing extracted_items. '
+                           'Every extracted item MUST have a non-empty reference_paragraphs list with valid '
+                           'paragraph and sentence IDs. If you cannot provide those references, return an empty '
+                           'extracted_items list for that concept; never emit an unreferenced candidate. '
                            'Never flatten the value object or omit references. Historical strategy output formats do not override this envelope.')
     try:
         await llm.extract_concepts_from_document_async(document, use_concurrency=False,
