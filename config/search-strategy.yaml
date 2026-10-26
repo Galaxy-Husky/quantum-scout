@@ -1,5 +1,5 @@
 # 以下是 Skill 默认配置的检索种子，不代表完整搜索空间。运行时必须继续生成自适应查询。
-# 当前为 agent 检索规划配置；online runner 不自动读取。scripts/searchos_seeds.py 只解析 layer1 动作，不联网。
+# 当前为 agent 检索规划配置；online runner 不自动读取。将选定查询显式写入项目任务 JSON，已知正文 URL 使用 open-source；不自动执行全部种子。
 configured_seed_queries:
   layer1_sources:
   - {id: SEED-L1-001, url: 'https://arxiv.org/pdf/2407.21723'}

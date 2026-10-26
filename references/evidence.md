@@ -146,7 +146,7 @@ review_contract=4；每项语义判断包含counter_evidence_search：segments_s
 每个true必须对应非空举证列表，false只能空列表；每项举证/矛盾含location及非空连续原文证据quote，location在实际提供并声明搜索的分段内。summary为1–2000字符且非空白，说明发现及其对结论的影响；不声称搜索未提供全文。
 发现却无法合规举证属于counter_evidence_unsubstantiated，不能改报false或用abstain绕过；语义评审结构或接地失败不追加格式纠错，保留原响应与实际长度，以error/contract_violation停止。
 suppressed_findings仅防同candidate_index三个flag的true→false，不比较矛盾列表/summary，不发现首次遗漏；counter_search_valid不能补足这些缺口。字段合规不证明反证搜索充分。
-归属/语义分别保存并绑定同report_id/candidate_index、case_id、value_text、location、source_sha256；review_policy.supported_pair统一校验，不另设宽松守卫。FILLED还须来源opened、该字段有唯一通过候选（多候选汇总尚未实现）、归属attributed、语义supported、location_checked=true、domain_rule_met=met。
+归属/语义分别保存并绑定同report_id/candidate_index、case_id、value_text、location、source_sha256；review_policy.supported_pair统一校验，不另设宽松守卫。FILLED还须来源opened、该字段有唯一通过候选或按[人工单选汇总](#人工单选汇总)形成当前有效选择、归属attributed、语义supported、location_checked=true、domain_rule_met=met。
 
 ### 原文证据绑定
 

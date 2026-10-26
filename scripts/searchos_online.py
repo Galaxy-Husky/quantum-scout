@@ -446,6 +446,8 @@ def doctor(config, source_urls=()):
         if provider in {'serper', 'tavily'} and not (os.environ.get(provider.upper() + '_API_KEY') or
                                                     getattr(settings, provider + '_api_key', '')):
             problems.append(f'missing {provider.upper()}_API_KEY')
+        if provider == 'deepseek' and not os.environ.get('DEEPSEEK_API_KEY'):
+            problems.append('missing DEEPSEEK_API_KEY')
         if provider == 'ragflow':
             for key in ('RAGFLOW_ENDPOINT', 'RAGFLOW_USER_ID'):
                 if not os.environ.get(key):
@@ -464,7 +466,7 @@ def doctor(config, source_urls=()):
     enabled = identity_backends(config)
     if ('openalex' in enabled or expansion_backend(config) == 'openalex') and not os.environ.get('OPENALEX_API_KEY'):
         problems.append('missing OPENALEX_API_KEY')
-    if not shutil.which('pdftotext'):
+    if any(provider != 'deepseek' for provider in providers) and not shutil.which('pdftotext'):
         problems.append('pdftotext is not installed')
     from citation_backends import backend_capabilities, identifiers
     capabilities = backend_capabilities(config['citation_backend'])
@@ -1435,7 +1437,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['doctor', 'run', 'open-source'])
     parser.add_argument('--project-root', type=Path, default=Path.cwd())
-    parser.add_argument('--config', type=Path, help='Default: <project-root>/artifacts/quantum-scout/config/online-pilot.json')
+    parser.add_argument('--config', type=Path, help='Default: <project-root>/searchos/config/online-pilot.json')
     parser.add_argument('--workspace', type=Path)
     parser.add_argument('--env-file', type=Path)
     parser.add_argument('--settings-file', type=Path, help='Shared SearchOS web_settings.json; does not write it')

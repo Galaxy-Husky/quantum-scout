@@ -1,5 +1,27 @@
 # 变更记录
 
+## 2026-10-26 授权单案例 pilot：语义位置契约停止
+
+- 使用 `searchos_online.py run --config artifacts/quantum-scout/validation/pilot-20261026T100244Z/input.json --env-file .env --workspace artifacts/quantum-scout/validation/pilot-20261026T100244Z/workspace`；独立授权、全新workspace，输入、有效配置和执行基线在同目录execution.json启动前固定，上限24次模型调用/900秒/3轮。
+- 实际6次模型调用、99.25秒、5条搜索结果、2份正文、76250 tokens（72322输入/3928输出，6/6用量已知，USD未知）；原生incomplete/error/contract_violation、0/8字段FILLED、3项UNCERTAIN，未准入/评分。抽取中的重复字段候选亦被隔离，未改成接受。
+- 直接停止原因：quantum_mechanism_role语义评审的conditional_limits_evidence选择8ebba77d:Q98（paragraph:33），但segments_searched遗漏该段。保存响应通过AnchoredJudgments初步解析，展开锚点后Judgments校验失败；离线回放复现ValidationError，结果写入同一execution.json。证据守卫正常拒绝，未修改运行代码或原始响应、未追加付费调用，剩余额度不授权续跑。下一步仅离线处理评审位置声明不一致的阻塞，不以补写历史声明修复本笔。
+
+## 2026-10-26 仓库与内部 skill 配置归位
+
+- 唯一 SearchOS 设置已原样移入当前虚拟环境的 `overlay_path()`，任务输入移至 `searchos/config/pilot-deepseek.json`；配置解析收敛为显式参数、环境变量、SearchOS 默认路径，取消 `.env` 邻接扫描，init 输入与 artifacts 产物分开。README/AGENTS 修正内部 skill 为独立仓库，补齐配置所有权和查找命令。
+- 修复 DeepSeek 密钥缺失未报错、Markdown 解析器标识错误，DeepSeek Fetch 不再要求未使用的本地 PDF 工具；runtime 按已安装包元数据定位源码，仅列运行依赖并区分当前 checkout 与安装构建。修正人工汇总“未实现”、已归档种子入口等失效说明。
+- 验证：`PYTHONPATH=skill/scripts:skill/tests .venv/bin/python -m pytest -o pythonpath=src skill/tests -q` 通过135项/165子用例（251.94秒，含新增9项配置回归）；`uv sync --locked --offline --reinstall-package searchos` 修复旧构建不识别DeepSeek，重装后配置/集成复验43项/4子用例通过（42.60秒）。两次测试各7条ContextGem output_language提示，无失败；脚本语法、YAML、SQL、任务JSON、文档链接及两层diff检查通过。
+- 实际 `doctor --config searchos/config/pilot-deepseek.json --env-file .env` 已识别deepseek并读取默认设置（SHA256 `3ed17be2dfe978bf1fef7bbc1090126f9b1049687bd15af391518d857da4dfc6`），初次因缺少DASHSCOPE_API_KEY和DEEPSEEK_API_KEY而ready=false；用户补齐后同命令复查退出0、ready=true、problems为空，模型角色均为qwen3.8-flash，设置哈希不变，仅证明本地构造检查通过，未验证在线鉴权；回执为 `artifacts/quantum-scout/validation/doctor.json`，runtime快照已更新到 `artifacts/quantum-scout/runtime/manifest.json`。配置阻塞已解除；下一步真实单案例运行仍须独立逐笔授权，当前任务配置上限为24次模型调用、900秒，不自动执行。
+- 本轮预算与模型调用、费用均0，未创建运行workspace。核对发现10月22日已有更新的真实运行，最新contractfix原生7/8、契约失败、未准入/评分，详见下条；已纠正README/AGENTS的当前状态，不将本轮离线修复当作语义修复。第39笔原回执 `artifacts/quantum-scout/validation/v21-calibrated-semantic-validation-20261017/execution.json` 及历史workspace不改写。
+
+## 2026-10-22 DeepSeek Search/Fetch 运行与抽取契约
+
+- DeepSeek Search/Fetch pilot: after removing proxy variables and consolidating configuration, the run completed with 3 opened sources and 24 model calls, stopping at `analysis_limit_reached`; 3 evidence cells filled, 5 uncertain, 19 missing, and no admission/score was triggered. The saved run is `artifacts/quantum-scout/workspaces/pilot-workspace-deepseek-20261022-final3`.
+- DeepSeek pilot rerun with `analysis_limit=12` reached 5 discovered and 2 opened sources before stopping on an extraction schema error (`LLMExtractionError`) after 21 model calls; 1 candidate was extracted, the problem definition remained incomplete, and admission/score did not run. Saved at `artifacts/quantum-scout/workspaces/pilot-workspace-deepseek-20261022-analysis12`.
+- The extraction bridge now states the required top-level ContextGem array shape with an explicit example; singleton object responses remain rejected rather than being assigned to an arbitrary field.
+- The extraction prompt now requires non-empty paragraph/sentence references on every candidate and instructs the model to return an empty item list when it cannot cite evidence; ungrounded candidates remain fail-closed.
+- 2026-10-26补核原生记录：同日最后一笔 `artifacts/quantum-scout/workspaces/pilot-workspace-deepseek-20261022-contractfix/reports/online.json` 为22次调用、原生7/8问题定义FILLED、1项UNCERTAIN，error/contract_violation（全部ContextGem候选违反契约），incomplete，未进入准入/评分；不作为独立语义验收通过证明。
+
 ## v21 — 2026-10-18 面向外部评审的探索说明
 
 - 按用户要求将[语义方案探索与评估](docs/semantic-design-evaluation.md)纳入skill仓库，并在DESIGN-PROGRESS添加入口：独立说明37–39笔失败实例、方向1指标撤回及停止、方向2各变体与条件化17→25调用示例、方向3风险；无需访问内部回执。明确实际人/代理原文审阅与旧标注回放的区别，下一项决策是独立验收承担者及范围。
@@ -330,9 +352,3 @@
 - 将辅助说明、历史变更、非核心测试和6个独立辅助入口移入本地 archive/；活跃规则合并至证据、流程、批次契约，archive/ 加入 Git 忽略。
 - 保留在线实际依赖、配置、接地和既有短引/映射/归属修复；归档改变执行文件集合，新运行使用全新 workspace。
 - 真实单案例仍以最后实际回执为准；整理与离线通过不代表 Track 跑通。v19及更早原件在 archive/v19/。
-# 2026-10-22
-
-- DeepSeek Search/Fetch pilot: after removing proxy variables and consolidating configuration, the run completed with 3 opened sources and 24 model calls, stopping at `analysis_limit_reached`; 3 evidence cells filled, 5 uncertain, 19 missing, and no admission/score was triggered. The saved run is `artifacts/quantum-scout/workspaces/pilot-workspace-deepseek-20261022-final3`.
-- DeepSeek pilot rerun with `analysis_limit=12` reached 5 discovered and 2 opened sources before stopping on an extraction schema error (`LLMExtractionError`) after 21 model calls; 1 candidate was extracted, the problem definition remained incomplete, and admission/score did not run. Saved at `artifacts/quantum-scout/workspaces/pilot-workspace-deepseek-20261022-analysis12`.
-- The extraction bridge now states the required top-level ContextGem array shape with an explicit example; singleton object responses remain rejected rather than being assigned to an arbitrary field.
-- The extraction prompt now requires non-empty paragraph/sentence references on every candidate and instructs the model to return an empty item list when it cannot cite evidence; ungrounded candidates remain fail-closed.

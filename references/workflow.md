@@ -4,9 +4,9 @@
 
 ## 配置和调用
 
-模型角色和搜索后端复用 SearchOS 共享设置；`--settings-file` > `SF_WEB_SETTINGS_PATH` > 所选 env 项目的 JSON > 安装默认值。显式文件损坏/缺失报错，不退回其他模型。`--env-file` 加载密钥，已有环境变量优先；不把密钥写入任务 JSON、日志或共享设置。
+模型角色和搜索后端复用 SearchOS 共享设置；`--settings-file` > `SF_WEB_SETTINGS_PATH` > 当前解释器中 SearchOS 的 `overlay_path()` 默认位置；不扫描项目根目录或 `.env` 旁的 JSON。显式文件损坏/缺失报错，不退回其他模型。`--env-file` 加载密钥，已有环境变量优先；不把密钥写入任务 JSON、日志或共享设置。
 
-任务 JSON 配置候选、查询、预算及可选调度偏好；`cases` 是案例 ID 到 `{description, queries}` 的映射，description 明确协议/系统身份，不预填领域结论。queries 使用普通 Web 查询列表，省略 providers 继承共享选择。候选 ID 格式为3–4位大写领域代码加4位序号，如 SYNC-0001。`preferred_track` 可为 `quantum-security`、`nonlocal-coordination` 或默认 null；仅优先选择该 Track 当前可执行的准入/评分任务，避免另一 Track 拒绝先完成案例，不改变八字段前置、全 true 评分门或覆盖停止契约。
+项目任务输入放 `searchos/config/`；`searchos_project.py init` 默认生成其中的 `online-pilot.json` 和 `env.example`，不覆盖已有文件。运行产物仍写 `artifacts/quantum-scout/`。任务 JSON 配置候选、查询、预算及可选调度偏好；`cases` 是案例 ID 到 `{description, queries}` 的映射，description 明确协议/系统身份，不预填领域结论。queries 使用普通 Web 查询列表，省略 providers 继承共享选择。候选 ID 格式为3–4位大写领域代码加4位序号，如 SYNC-0001。`preferred_track` 可为 `quantum-security`、`nonlocal-coordination` 或默认 null；仅优先选择该 Track 当前可执行的准入/评分任务，避免另一 Track 拒绝先完成案例，不改变八字段前置、全 true 评分门或覆盖停止契约。
 
 ```json
 {
@@ -91,12 +91,12 @@ verified要求标识/版本与expected_title一致；缺标识/标题/版本核�
 
 adapter是唯一状态所有者，SOCM/Frontier/EvidenceGraph/calibration由已提交事实派生；`searchos_adapter.py repair <workspace>` 重建视图，不从视图补事实。single_runner排它、adapter锁保护写入；原版SearchSession/Orchestrator不得写同一workspace。
 审计及失败事件在锁内原子写入事实，不单独重建SOCM或strategy patterns；来源/候选等事实变更才更新投影。调度与导出按需读取事实，失败内容仍用于原有查询上下文与字段诊断，不依赖日志刷新视图。
-模型/搜索工厂、设置解析和隔离执行器复用SearchOS；不另造后端或写回共享JSON。依赖固定于项目锁与源码修订，升级先验证实际调用边界，不迁移旧事实。
+模型/搜索工厂、设置解析和隔离执行器复用SearchOS；不另造后端或写回共享JSON。包解析由项目锁约束；本地目录源不是不可变提交锁。runtime 快照记录已安装包版本、安装来源及当前源码修订，当前 checkout 不证明已安装构建内容；升级先验证实际调用边界，不迁移旧事实。
 执行基线覆盖scripts/config/assets，文档基线覆盖references/SKILL/CHANGELOG；仅文档变化可警告，执行文件变化须新workspace或原归档skill，禁止补造历史基线。
 
 当前调度接口`online_policy.decide`从同一快照返回executable_actions、各动作及汇总blocked_reasons、terminal_reason和stop_evidence；预算结果由runner传入，并保留请求前的原子预算检查。原因代码限于代码实际分支（前置未满足、范围外、被占用、来源处理完毕/不可用、服务不可用及预算耗尽），不另持久化动作计划。无可执行动作不得伪报预算耗尽；仍有待处理来源但全部阻塞时记录error/no_executable_action，不宣称范围耗尽。
 `claimed_tasks`为task_id到owner/started_at的唯一占用映射；恢复只释放对应失效invocation的占用，重试与断点仍读既有调用/assessment记录，不写invocation.active_task。旧列表格式仅兼容读取，旧基线不能直接续跑。record-gap仍接受missing/hard_cell输入，存储只保留investigate、理由及尝试；hard_cell不再投影成证据资格状态，investigate=false只限制该工作区调查范围。
-多个已通过候选按report_id/candidate_index保留，不按value字符串合并；字段保留UNCERTAIN展示待汇总且不排入反复抽取，其他可调查字段继续。汇总选择接口尚未实现，不自动评审；pending_aggregation仅为案例导出的派生候选列表。中断来源只接受宿主经asyncio取消消息显式传入的StopRequest(initiator, reason, request_ref)：例如实际用户停止指令对应`task.cancel(StopRequest("user", "停止原因", "用户指令引用"))`。initiator限user/agent/system，理由及依据引用必填；这是调用方声明，不是异常类型证明的身份或授权。仅显式user映射user_aborted，agent/system或无来源的KeyboardInterrupt/CancelledError映射error/execution_interrupted；无来源记unknown，不解析自由文本猜测。CLI裸信号没有来源信息，因此保留unknown；宿主集成须在实际停止时提供声明，不在启动配置中预填。来源与原异常类型写入已有stop_evidence和失败事件，不另建停止请求账本；历史回执不改写，恢复不继承前笔取消来源或授权。
+多个已通过候选按report_id/candidate_index保留，不按value字符串合并；字段保留UNCERTAIN展示待汇总且不排入反复抽取，其他可调查字段继续。可选人工单选通过 `aggregation-context` / `aggregate-field` 回写，具体见[人工单选汇总](evidence.md#人工单选汇总)；待汇总不阻止调查新来源，不能支撑准入或评分。pending_aggregation仅为案例导出的派生候选列表。中断来源只接受宿主经asyncio取消消息显式传入的StopRequest(initiator, reason, request_ref)：例如实际用户停止指令对应`task.cancel(StopRequest("user", "停止原因", "用户指令引用"))`。initiator限user/agent/system，理由及依据引用必填；这是调用方声明，不是异常类型证明的身份或授权。仅显式user映射user_aborted，agent/system或无来源的KeyboardInterrupt/CancelledError映射error/execution_interrupted；无来源记unknown，不解析自由文本猜测。CLI裸信号没有来源信息，因此保留unknown；宿主集成须在实际停止时提供声明，不在启动配置中预填。来源与原异常类型写入已有stop_evidence和失败事件，不另建停止请求账本；历史回执不改写，恢复不继承前笔取消来源或授权。
 
 calibration 仅在 checkpoint、最终停止或显式导出时生成；每批继续到有据停止，最终保留未完成状态。导出从事实重算并验证批次，仅回填 checkpoint 计数，不重写 schema 或 SOCM；缺失/过期 SOCM 由上述 repair 入口重建。`scripts/export_batch.py <workspace>` 重新导出已复核事实，渲染/校验入口用各脚本`--help`；不能反写事实。详细停止与四视图一致性见批次契约。
 calibration不建生产库或正式cases；已有SQLite用只读URI执行queries.sql。production写入/阶段转换另行授权，保留来源外键、单位、两来源和事务校验；建库辅助入口已归档，使用前在独立副本恢复。
@@ -178,6 +178,6 @@ Track四项全true、双审职责、评分有效维数与纳入阈值属于结�
 PYTHONPATH=skill/scripts:skill/tests .venv/bin/python -m pytest -o pythonpath=src skill/tests -q
 ```
 
-`tests/test_workflow_contracts.py` 是集成回归；其余活跃测试仅保留在线夹具、ContextGem映射、单次锚点评审与归属上下文回归。历史文档、其余测试和独立诊断工具已移入 `archive/`，不在默认阅读、测试或运行路径中；需要时先恢复到独立副本并核对依赖。
+`tests/test_workflow_contracts.py` 是集成回归；活跃测试还包括配置准备、在线夹具、ContextGem映射、单次锚点评审、归属上下文、调度状态与人工单选回写。历史文档、其余测试和独立诊断工具已移入 `archive/`，不在默认阅读、测试或运行路径中；需要时先恢复到独立副本并核对依赖。
 
 每轮只交代实际动作、预算、阻塞点、修复/重跑结果和下一步唯一动作。原始请求/响应与失败回执仍由原生运行日志保存，不另建平行分析体系。归档不改变历史 workspace；基线兼容规则见[状态、导出与兼容](#状态导出与兼容)。

@@ -94,7 +94,7 @@ def source_segments(data, content_type):
             element.drop_tree()
         parts = [' '.join(e.text_content().split()) for e in doc.xpath('//p|//h1|//h2|//h3|//li|//tr|//pre')]
         return [{'location': f'paragraph:{i+1}', 'text': part} for i, part in enumerate(parts) if part]
-    raise ValueError('Only actual PDF/HTML source documents are supported')
+    raise ValueError('Only PDF, HTML and Markdown source documents are supported')
 
 
 async def parse_source(data, content_type):
@@ -147,5 +147,6 @@ async def open_source(url, directory, run_id, provider=None):
     return {'source_id': sid, 'run_id': run_id, 'url': final_url, 'requested_url': url,
             'status': 'opened', 'document_version': 'sha256:' + raw_sha, 'raw_sha256': raw_sha,
             'opened_at': datetime.now(timezone.utc).isoformat(), 'text': text, 'segments': segments,
-            'text_extraction': {'engine': 'pdftotext' if data.startswith(b'%PDF-') else 'lxml',
+            'text_extraction': {'engine': ('pdftotext' if data.startswith(b'%PDF-') else
+                                           'markdown' if 'markdown' in content_type else 'lxml'),
                                 'mode': 'reading_order' if data.startswith(b'%PDF-') else 'paragraphs'}}

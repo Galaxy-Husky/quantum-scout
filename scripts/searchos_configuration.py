@@ -3,7 +3,6 @@ import hashlib
 import os
 from pathlib import Path
 import re
-import sys
 
 
 def search_provider_name():
@@ -19,15 +18,8 @@ def settings_path(env_file=None, explicit=None):
         return Path(explicit).expanduser().resolve(), 'argument', True
     if os.environ.get('SF_WEB_SETTINGS_PATH'):
         return Path(os.environ['SF_WEB_SETTINGS_PATH']).expanduser().resolve(), 'environment', True
-    if env_file is not None:
-        project = Path(env_file).resolve().parent
-        version = f'python{sys.version_info.major}.{sys.version_info.minor}'
-        candidates = {p.resolve() for p in (project / 'web_settings.json',
-            project / '.venv/lib' / version / 'site-packages/web_settings.json') if p.is_file()}
-        if len(candidates) > 1:
-            raise ValueError('Multiple SearchOS settings files beside the env project; select --settings-file')
-        if candidates:
-            return candidates.pop(), 'env_project', True
+    # env_file supplies credentials, not a second configuration search root.
+    # Keep its argument for existing callers; SearchOS owns the default location.
     return overlay_path().expanduser().resolve(), 'searchos_default', False
 
 
